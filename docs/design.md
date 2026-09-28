@@ -69,5 +69,7 @@ down is an alternative, but it's slower and can't reach local-only data.
 - **mobile-mcp conflict.** mobile-mcp leaves a `com.mobilenext.mobilecli.DeviceServer` process that holds the
   device's single UiAutomation connection, so a later `uiautomator dump` crashes with "UiAutomationService already
   registered". The integration test kills that process before it taps.
+- **Leaked port forwards.** If the MCP server is killed hard (e.g. its client exits), the `adb forward` it created
+  stays behind until adb restarts or you run `adb forward --remove-all`. Harmless, but it accumulates.
 - **No iOS.** A Swift bridge using the same HTTP contract would let the same MCP server work over
   `iproxy`/`devicectl`. Not built.
