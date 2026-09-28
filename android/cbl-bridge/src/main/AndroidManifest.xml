@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed to open a localhost ServerSocket. Only merged into builds that include the bridge. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <provider
+            android:name="io.github.cblmcp.bridge.BridgeInitProvider"
+            android:authorities="${applicationId}.cblbridge-init"
+            android:exported="false"
+            android:initOrder="-100" />
+    </application>
+</manifest>
