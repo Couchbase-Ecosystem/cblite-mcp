@@ -51,7 +51,7 @@ server.registerTool(
     description: "Scan every adb-connected device/emulator for running apps that include the Couchbase Lite bridge.",
     annotations: { readOnlyHint: true },
   },
-  async () => run(async () => ({ bridges: await client.discover(), connected: client.connection ?? null })),
+  async () => run(async () => ({ bridges: await client.discover(null), connected: client.connection ?? null })),
 );
 
 server.registerTool(
@@ -78,7 +78,7 @@ server.registerTool(
   "cbl_info",
   {
     title: "Database overview",
-    description: "Couchbase Lite version, databases, every scope/collection with document counts and indexes, and registered replicators.",
+    description: "Couchbase Lite version, device clock (deviceTimeMs, for writing timestamps), databases, every scope/collection with document counts and indexes, and registered replicators.",
     annotations: { readOnlyHint: true },
   },
   async () =>

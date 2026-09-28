@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "cbl": {
+      "command": "node",
+      "args": ["/home/deniswsrosa/Documents/projects/cblitemcp/mcp-server/dist/index.js"],
+      "env": { "ANDROID_SERIAL": "emulator-5554", "CBL_PACKAGE": "io.github.cblmcp.brewboard" }
+    },
+    "mobile": {
+      "command": "npx",
+      "args": ["-y", "@mobilenext/mobile-mcp@latest"]
+    }
+  }
+}

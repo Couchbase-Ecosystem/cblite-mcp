@@ -22,7 +22,18 @@ function adb(...args) {
 
 /** Finds a button by its text in the live UI hierarchy and taps its centre, like a user would. */
 function tapText(label) {
-  adb("shell", "uiautomator", "dump", "/sdcard/ui.xml");
+  // mobile-mcp leaves a DeviceServer holding the device's single UiAutomation slot; free it for uiautomator.
+  try { adb("shell", "pkill", "-f", "com.mobilenext.mobilecli.DeviceServer"); } catch {}
+  // uiautomator dump fails if another UiAutomation client (e.g. mobile-mcp) is attached; retry briefly.
+  for (let i = 0; ; i++) {
+    try {
+      adb("shell", "uiautomator", "dump", "/sdcard/ui.xml");
+      break;
+    } catch (e) {
+      if (i >= 4) throw e;
+      execFileSync("sleep", ["2"]);
+    }
+  }
   const xml = adb("exec-out", "cat", "/sdcard/ui.xml");
   const m = xml.match(new RegExp(`text="${label}"[^>]*bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`));
   assert.ok(m, `no "${label}" on screen`);

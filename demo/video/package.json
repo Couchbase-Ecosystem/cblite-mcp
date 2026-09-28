@@ -1,0 +1,19 @@
+{
+  "name": "cbl-mcp-demo-video",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render DemoVideo out/cbl-mcp-demo.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.521",
+    "@remotion/google-fonts": "4.0.521",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.521"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "typescript": "^5.9.0"
+  }
+}

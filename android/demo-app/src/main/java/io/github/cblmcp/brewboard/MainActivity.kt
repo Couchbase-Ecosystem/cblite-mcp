@@ -126,7 +126,7 @@ private fun BrewBoard(repo: OrderRepository) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                for (status in listOf("ready", "brewing", "new")) {
+                for (status in listOf("new", "brewing", "ready")) {
                     val group = orders.filter { it.status == status }
                     if (group.isEmpty()) continue
                     item(key = "h-$status") { SectionHeader(status, group.size) }

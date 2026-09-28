@@ -112,6 +112,9 @@ internal class BridgeApi(private val bridge: CblBridge) {
         }
         val info = hello()
         info.put("couchbaseLiteVersion", cblVersion())
+        // Agents need "now" in the device's clock to write realistic timestamps.
+        info.put("deviceTimeMs", System.currentTimeMillis())
+        info.put("deviceTimeZone", java.util.TimeZone.getDefault().id)
         info.put("readOnly", bridge.readOnly)
         info.put("databases", dbs)
         info.put("replicators", JSONArray(bridge.replicators.keys.sorted()))

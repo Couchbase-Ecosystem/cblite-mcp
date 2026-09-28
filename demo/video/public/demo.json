@@ -1,0 +1,536 @@
+{
+ "fps": 30,
+ "durationInFrames": 4698,
+ "realSeconds": 150.3,
+ "steps": [
+  {
+   "title": "Discover the schema",
+   "prompt": "What's in this app's Couchbase Lite database? Figure out how an order document is structured."
+  },
+  {
+   "title": "Seed a morning rush",
+   "prompt": "Seed a realistic morning rush: 6 new orders from different customers, using real items and prices from the menu, created over the last 10 minutes, matching the app's order schema exactly."
+  },
+  {
+   "title": "Live edits",
+   "prompt": "Directly in the database, make two quick changes: move the oldest open order to brewing, and add an oat-milk note to the order of the customer with the biggest order."
+  },
+  {
+   "title": "Drive the UI, verify the data",
+   "prompt": "Now QA the app: acting as the barista, tap Start on one of the NEW orders in the app on the emulator, then confirm in the database that the app itself wrote the change correctly."
+  },
+  {
+   "title": "Ask questions in SQL++",
+   "prompt": "With SQL++: how much revenue have we served today, and what's the open ticket value per status?"
+  },
+  {
+   "title": "Clean up",
+   "prompt": "Great demo. Delete the orders you created in this session so the board is back to how we found it."
+  }
+ ],
+ "events": [
+  {
+   "frame": 11,
+   "step": 0,
+   "kind": "prompt",
+   "text": "What's in this app's Couchbase Lite database? Figure out how an order document is structured.",
+   "title": "Discover the schema"
+  },
+  {
+   "frame": 113,
+   "step": 0,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_connect",
+   "args": "package: \"io.github.cblmcp.brewboard\""
+  },
+  {
+   "frame": 119,
+   "step": 0,
+   "kind": "tool_result",
+   "text": "io.github.cblmcp.brewboard \u00b7 Couchbase Lite 4.1.2-4 \u00b7 shop.menu (9), shop.orders (10)",
+   "isError": false
+  },
+  {
+   "frame": 174,
+   "step": 0,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_describe_collection",
+   "args": "collection: \"shop.orders\""
+  },
+  {
+   "frame": 175,
+   "step": 0,
+   "kind": "tool_result",
+   "text": "10 docs sampled \u00b7 fields: createdAt, customer, items, pickedUpAt, readyAt, startedAt, status, total",
+   "isError": false
+  },
+  {
+   "frame": 283,
+   "step": 0,
+   "kind": "text",
+   "text": "The `brewboard` database holds 9 menu items in `shop.menu` and 10 orders in `shop.orders`, which has an index on `status`; the default collection is empty. Each order has an ID like `order-<createdAt>` and contains `customer` (a string), an `items` array of `{name, qty, price}`, a numeric `total`, and a `status` such as `\"picked_up\"`. It also has millisecond timestamps for each step: `createdAt`, `startedAt`, `readyAt` and `pickedUpAt`; all 10 current orders are picked up, so I haven't seen an order in any other status yet."
+  },
+  {
+   "frame": 634,
+   "step": 1,
+   "kind": "prompt",
+   "text": "Seed a realistic morning rush: 6 new orders from different customers, using real items and prices from the menu, created over the last 10 minutes, matching the app's order schema exactly.",
+   "title": "Seed a morning rush"
+  },
+  {
+   "frame": 728,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_query",
+   "args": "SELECT META(m).id, m.* FROM shop.menu AS m"
+  },
+  {
+   "frame": 728,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_info",
+   "args": ""
+  },
+  {
+   "frame": 734,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "9 rows in 1.4 ms",
+   "isError": false
+  },
+  {
+   "frame": 734,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "io.github.cblmcp.brewboard \u00b7 Couchbase Lite 4.1.2-4 \u00b7 shop.menu (9), shop.orders (10)",
+   "isError": false
+  },
+  {
+   "frame": 839,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_list_elements_on_screen",
+   "args": ""
+  },
+  {
+   "frame": 850,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "Device \"emulator-5554\" not found. Use the mobile_list_available_devices tool to see available devices.",
+   "isError": true
+  },
+  {
+   "frame": 942,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_list_available_devices",
+   "args": ""
+  },
+  {
+   "frame": 954,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "Pixel 8a (real), Pixel 6 API 34 (emulator)",
+   "isError": false
+  },
+  {
+   "frame": 1023,
+   "step": 1,
+   "kind": "text",
+   "text": "I'm checking the app's screen to see which order statuses it uses before I seed the orders."
+  },
+  {
+   "frame": 1032,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_list_elements_on_screen",
+   "args": ""
+  },
+  {
+   "frame": 1138,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "38 UI elements on screen",
+   "isError": false
+  },
+  {
+   "frame": 1294,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_batch",
+   "args": "collection: \"shop.orders\", 6 \u00d7 create"
+  },
+  {
+   "frame": 1296,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "1 transaction \u00b7 6 writes committed",
+   "isError": false
+  },
+  {
+   "frame": 1303,
+   "step": 1,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_list_elements_on_screen",
+   "args": ""
+  },
+  {
+   "frame": 1402,
+   "step": 1,
+   "kind": "tool_result",
+   "text": "69 UI elements on screen",
+   "isError": false
+  },
+  {
+   "frame": 1509,
+   "step": 1,
+   "kind": "text",
+   "text": "I added 6 orders from Dana, Eli, Farah, Gabe, Hana and Ivan, created over the last 10 minutes, using real menu items and prices and the same fields and `order-<createdAt>` IDs as the existing orders. Your data only showed the `picked_up` status, so I took the other status names from the app's screen labels (`new`, `brewing`, `ready`) and left out the timestamps for steps an order hasn't reached yet. The live board picked up all six correctly: 3 New, 2 Brewing, 1 Ready, and $46.00 in open tickets."
+  },
+  {
+   "frame": 1858,
+   "step": 2,
+   "kind": "prompt",
+   "text": "Directly in the database, make two quick changes: move the oldest open order to brewing, and add an oat-milk note to the order of the customer with the biggest order.",
+   "title": "Live edits"
+  },
+  {
+   "frame": 1960,
+   "step": 2,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_query",
+   "args": "SELECT META(o).id, o.customer, o.status, o.total, o.createdAt, o.items FROM shop.orders AS o ORDER BY o.createdAt"
+  },
+  {
+   "frame": 1966,
+   "step": 2,
+   "kind": "tool_result",
+   "text": "16 rows in 5.9 ms",
+   "isError": false
+  },
+  {
+   "frame": 2084,
+   "step": 2,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_info",
+   "args": ""
+  },
+  {
+   "frame": 2085,
+   "step": 2,
+   "kind": "tool_result",
+   "text": "io.github.cblmcp.brewboard \u00b7 Couchbase Lite 4.1.2-4 \u00b7 shop.menu (9), shop.orders (16)",
+   "isError": false
+  },
+  {
+   "frame": 2163,
+   "step": 2,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_batch",
+   "args": "collection: \"shop.orders\", 2 \u00d7 merge"
+  },
+  {
+   "frame": 2164,
+   "step": 2,
+   "kind": "tool_result",
+   "text": "1 transaction \u00b7 2 writes committed",
+   "isError": false
+  },
+  {
+   "frame": 2282,
+   "step": 2,
+   "kind": "text",
+   "text": "I moved Gabe's order to brewing with a `startedAt` timestamp; the oldest open order is actually Dana's, but it's already ready, so I took the oldest new order to avoid moving Dana's backwards. I added `note: \"Oat milk, please\"` to Hana's $9.50 order, which ties with Jonah's already-served $9.50 order for biggest, so I picked the open one. The app's orders had no note field before, so I made up the name `note`, and I haven't checked whether the board actually shows it."
+  },
+  {
+   "frame": 2633,
+   "step": 3,
+   "kind": "prompt",
+   "text": "Now QA the app: acting as the barista, tap Start on one of the NEW orders in the app on the emulator, then confirm in the database that the app itself wrote the change correctly.",
+   "title": "Drive the UI, verify the data"
+  },
+  {
+   "frame": 2728,
+   "step": 3,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_list_elements_on_screen",
+   "args": ""
+  },
+  {
+   "frame": 2828,
+   "step": 3,
+   "kind": "tool_result",
+   "text": "70 UI elements on screen",
+   "isError": false
+  },
+  {
+   "frame": 2907,
+   "step": 3,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_changes",
+   "args": ""
+  },
+  {
+   "frame": 2912,
+   "step": 3,
+   "kind": "tool_result",
+   "text": "no changes yet",
+   "isError": false
+  },
+  {
+   "frame": 2973,
+   "step": 3,
+   "kind": "tool_use",
+   "server": "mobile",
+   "tool": "mobile_click_on_screen_at_coordinates",
+   "args": "ref: \"@e50\""
+  },
+  {
+   "frame": 3073,
+   "step": 3,
+   "kind": "tool_result",
+   "text": "Clicked on element @e50",
+   "isError": false
+  },
+  {
+   "frame": 3129,
+   "step": 3,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_changes",
+   "args": "timeoutMs: 5000"
+  },
+  {
+   "frame": 3130,
+   "step": 3,
+   "kind": "tool_result",
+   "text": "app changed order-1790628100000",
+   "isError": false
+  },
+  {
+   "frame": 3191,
+   "step": 3,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_get_document",
+   "args": "collection: \"shop.orders\", id: \"order-1790628100000\""
+  },
+  {
+   "frame": 3192,
+   "step": 3,
+   "kind": "tool_result",
+   "text": "order-1790628100000 \u00b7 customer: Ivan, status: brewing, startedAt: 1790628225483",
+   "isError": false
+  },
+  {
+   "frame": 3287,
+   "step": 3,
+   "kind": "text",
+   "text": "The QA check passed: I tapped Start on Ivan's new order, and the database recorded exactly one change, made by the app itself rather than by me, to `order-1790628100000`. The order now has `status: \"brewing\"` and `startedAt: 1790628225483`, which matches the tap time, and its other fields are unchanged. That's the same change I made by hand to Gabe's order, so my direct edits follow the app's own format."
+  },
+  {
+   "frame": 3639,
+   "step": 4,
+   "kind": "prompt",
+   "text": "With SQL++: how much revenue have we served today, and what's the open ticket value per status?",
+   "title": "Ask questions in SQL++"
+  },
+  {
+   "frame": 3762,
+   "step": 4,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_query",
+   "args": "SELECT COUNT(*) AS served, SUM(o.total) AS revenue FROM shop.orders AS o WHERE o.status = 'picked_up' AND o.pickedUpAt >= STR_TO_MILLIS('2026-09-28T00:00:00+02:00')"
+  },
+  {
+   "frame": 3771,
+   "step": 4,
+   "kind": "tool_result",
+   "text": "{\"revenue\": 66.75, \"served\": 10}",
+   "isError": false
+  },
+  {
+   "frame": 3786,
+   "step": 4,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_query",
+   "args": "SELECT o.status, COUNT(*) AS orders, SUM(o.total) AS value FROM shop.orders AS o WHERE o.status IN ['new','brewing','ready'] GROUP BY o.status ORDER BY o.status"
+  },
+  {
+   "frame": 3787,
+   "step": 4,
+   "kind": "tool_result",
+   "text": "{\"orders\": 4, \"value\": 28.25, \"status\": \"brewing\"} | {\"orders\": 1, \"value\": 9.5, \"status\": \"new\"} | {\"orders\": 1, \"value\": 8.25, \"status\": \"ready\"}",
+   "isError": false
+  },
+  {
+   "frame": 3860,
+   "step": 4,
+   "kind": "text",
+   "text": "Today (from midnight Berlin time) we've served 10 orders for $66.75 in revenue. Open tickets add up to $46.00, which matches the board: brewing is 4 orders for $28.25, new is 1 for $9.50 (Hana), and ready is 1 for $8.25 (Dana)."
+  },
+  {
+   "frame": 4181,
+   "step": 5,
+   "kind": "prompt",
+   "text": "Great demo. Delete the orders you created in this session so the board is back to how we found it.",
+   "title": "Clean up"
+  },
+  {
+   "frame": 4278,
+   "step": 5,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_batch",
+   "args": "collection: \"shop.orders\", 6 \u00d7 delete"
+  },
+  {
+   "frame": 4278,
+   "step": 5,
+   "kind": "tool_use",
+   "server": "cbl",
+   "tool": "cbl_query",
+   "args": "SELECT o.status, COUNT(*) AS n FROM shop.orders AS o GROUP BY o.status"
+  },
+  {
+   "frame": 4284,
+   "step": 5,
+   "kind": "tool_result",
+   "text": "1 transaction \u00b7 6 writes committed",
+   "isError": false
+  },
+  {
+   "frame": 4285,
+   "step": 5,
+   "kind": "tool_result",
+   "text": "{\"n\": 10, \"status\": \"picked_up\"}",
+   "isError": false
+  },
+  {
+   "frame": 4361,
+   "step": 5,
+   "kind": "text",
+   "text": "I deleted all 6 orders I seeded, including the ones we changed along the way, and the database is back to the original 10 served orders with nothing open. They were deleted rather than purged, so Couchbase Lite still keeps tombstones for them; I can purge those too if you want no trace left."
+  }
+ ],
+ "speedSpans": [
+  {
+   "from": 0,
+   "to": 11,
+   "speed": 4.0
+  },
+  {
+   "from": 86,
+   "to": 113,
+   "speed": 4.0
+  },
+  {
+   "from": 301,
+   "to": 541,
+   "speed": 0
+  },
+  {
+   "from": 709,
+   "to": 728,
+   "speed": 4.0
+  },
+  {
+   "from": 809,
+   "to": 839,
+   "speed": 4.0
+  },
+  {
+   "from": 925,
+   "to": 942,
+   "speed": 4.0
+  },
+  {
+   "from": 1107,
+   "to": 1138,
+   "speed": 4.0
+  },
+  {
+   "from": 1213,
+   "to": 1294,
+   "speed": 4.0
+  },
+  {
+   "from": 1378,
+   "to": 1402,
+   "speed": 4.0
+  },
+  {
+   "from": 1527,
+   "to": 1767,
+   "speed": 0
+  },
+  {
+   "from": 1933,
+   "to": 1960,
+   "speed": 4.0
+  },
+  {
+   "from": 2300,
+   "to": 2540,
+   "speed": 0
+  },
+  {
+   "from": 2708,
+   "to": 2728,
+   "speed": 4.0
+  },
+  {
+   "from": 2803,
+   "to": 2828,
+   "speed": 4.0
+  },
+  {
+   "from": 3048,
+   "to": 3073,
+   "speed": 4.0
+  },
+  {
+   "from": 3305,
+   "to": 3545,
+   "speed": 0
+  },
+  {
+   "from": 3714,
+   "to": 3762,
+   "speed": 4.0
+  },
+  {
+   "from": 3878,
+   "to": 4088,
+   "speed": 0
+  },
+  {
+   "from": 4256,
+   "to": 4278,
+   "speed": 4.0
+  },
+  {
+   "from": 4379,
+   "to": 4619,
+   "speed": 0
+  }
+ ],
+ "model": "claude-opus-5-5",
+ "costUsd": 0.52
+}

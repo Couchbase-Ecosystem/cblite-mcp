@@ -71,33 +71,33 @@ export class BridgeClient {
   }
 
   /** Probes every attached device for bridges on ports 47111..47120. */
-  async discover(): Promise<FoundBridge[]> {
-    const devices = (await listDevices()).filter((d) => d.state === "device");
-    const found: FoundBridge[] = [];
-    await Promise.all(
-      devices.map(async (d) => {
-        for (let p = DEFAULT_DEVICE_PORT; p < DEFAULT_DEVICE_PORT + PORT_RANGE; p++) {
-          let local: number | undefined;
-          try {
-            local = await forward(d.serial, p);
-            const { status, data } = await httpJson(local, "/hello", { timeoutMs: 1500 });
-            if (status === 200 && data?.bridge === "cbl-mcp-bridge") found.push({ ...data, serial: d.serial, model: d.model });
-          } catch {
-            // nothing listening on this port
-          } finally {
-            if (local) await removeForward(d.serial, local);
-          }
+  /** Pass null to scan every device regardless of ANDROID_SERIAL. */
+  async discover(serial?: string | null): Promise<FoundBridge[]> {
+    const onlySerial = serial === undefined ? this.preferredSerial : (serial ?? undefined);
+    const devices = (await listDevices()).filter((d) => d.state === "device" && (!onlySerial || d.serial === onlySerial));
+    const probes = devices.flatMap((d) =>
+      Array.from({ length: PORT_RANGE }, (_, i) => DEFAULT_DEVICE_PORT + i).map(async (p): Promise<FoundBridge | undefined> => {
+        let local: number | undefined;
+        try {
+          local = await forward(d.serial, p);
+          const { status, data } = await httpJson(local, "/hello", { timeoutMs: 1500 });
+          if (status === 200 && data?.bridge === "cbl-mcp-bridge") return { ...data, serial: d.serial, model: d.model };
+        } catch {
+          // nothing listening on this port
+        } finally {
+          if (local) await removeForward(d.serial, local);
         }
+        return undefined;
       }),
     );
-    return found;
+    return (await Promise.all(probes)).filter((b): b is FoundBridge => b !== undefined);
   }
 
   async connect(opts: { device?: string; package?: string; launch?: boolean } = {}): Promise<Connection> {
     const wantSerial = opts.device ?? this.preferredSerial;
     const wantPkg = opts.package ?? this.preferredPackage;
 
-    let bridges = await this.discover();
+    let bridges = await this.discover(wantSerial);
     let match = bridges.filter((b) => (!wantSerial || b.serial === wantSerial) && (!wantPkg || b.package === wantPkg));
 
     if (match.length === 0 && wantPkg && opts.launch !== false) {
@@ -106,7 +106,7 @@ export class BridgeClient {
         await launchApp(devices[0].serial, wantPkg);
         for (let i = 0; i < 20 && match.length === 0; i++) {
           await new Promise((r) => setTimeout(r, 500));
-          bridges = await this.discover();
+          bridges = await this.discover(wantSerial);
           match = bridges.filter((b) => b.serial === devices[0].serial && b.package === wantPkg);
         }
       }
