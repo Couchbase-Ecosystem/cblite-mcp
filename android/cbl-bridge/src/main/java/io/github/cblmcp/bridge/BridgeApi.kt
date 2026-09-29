@@ -119,7 +119,15 @@ internal class BridgeApi(private val bridge: CblBridge) {
             )
         }
         for (name in onDiskNames() - allDatabases().keys) {
-            dbs.put(jsonOf("name" to name, "registeredByApp" to false, "opened" to false))
+            dbs.put(
+                jsonOf(
+                    "name" to name,
+                    "registeredByApp" to false,
+                    "opened" to false,
+                    "collections" to JSONArray(),
+                    "note" to "On disk but not opened yet; pass database='$name' to any tool to open it. Encrypted databases must be registered by the app.",
+                ),
+            )
         }
         val info = hello()
         info.put("couchbaseLiteVersion", cblVersion())
@@ -163,7 +171,18 @@ internal class BridgeApi(private val bridge: CblBridge) {
         synchronized(discovered) {
             discovered[name]?.let { return it }
             bridge.appContext?.let { ctx -> runCatching { CouchbaseLite.init(ctx) } }
-            val db = Database(name)
+            val db = try {
+                Database(name)
+            } catch (e: CouchbaseLiteException) {
+                if (e.code == 20 || e.message?.contains("encryption", ignoreCase = true) == true) {
+                    throw ApiException(
+                        400,
+                        "Database '$name' is encrypted and the bridge doesn't have its key. Register the instance your app " +
+                            "opened (CblBridge.register(db)) so the bridge can use it.",
+                    )
+                }
+                throw e
+            }
             db.allCollections().forEach { bridge.changes.watch(name, it) }
             discovered[name] = db
             return db

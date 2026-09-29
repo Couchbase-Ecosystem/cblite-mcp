@@ -66,7 +66,7 @@ test("exposes the expected tools", async () => {
 test("auto-connects and reports collections", async () => {
   const info = await call("cbl_info");
   assert.equal(info.connected.package, PKG);
-  const cols = info.databases.flatMap((d) => d.collections.map((c) => c.fullName));
+  const cols = info.databases.flatMap((d) => (d.collections ?? []).map((c) => c.fullName));
   assert.ok(cols.includes("shop.orders") && cols.includes("shop.menu"));
 });
 

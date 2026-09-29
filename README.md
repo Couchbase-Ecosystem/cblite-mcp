@@ -101,7 +101,7 @@ release APK: 0 bridge classes.
 
 | | |
 |---|---|
-| **Your app** | Android, Couchbase Lite for Android **4.x**, CE or EE (tested with 4.1.2), a **debuggable** (debug) build, minSdk 24+ |
+| **Your app** | Android, Couchbase Lite for Android **4.x**, CE or EE, including encrypted databases (tested with 4.1.2), a **debuggable** (debug) build, minSdk 24+ |
 | **Your machine** | Node.js **20+**, Android platform-tools (`adb`) on `PATH` or `ANDROID_HOME` set, JDK 17 to build the Android parts |
 | **Device** | Emulator or physical device with USB debugging on |
 | **MCP client** | Claude Code (tested), or any client that supports stdio MCP servers |
@@ -233,8 +233,9 @@ fun onReplicatorCreated(name: String, replicator: Replicator) = CblBridge.regist
 ```
 
 > **Skipping step 2 still works, with caveats.** The bridge finds any `*.cblite2` database in the app's `files/`
-> directory and opens its own instance on demand. Reads and writes work, but the UI may not react live, and
-> encrypted (EE) databases need registration because the bridge doesn't know the key.
+> directory and opens its own instance on demand. Reads and writes work, but the UI may not react live. Encrypted
+> (EE) databases *must* be registered: the bridge never sees your key, so it reports
+> "Database '…' is encrypted … Register the instance your app opened" instead of opening them.
 
 ### 3. Run and connect
 
@@ -400,6 +401,10 @@ Latest results (2026-09-29), identical on both devices:
 | MCP end-to-end | 23/23 | 23/23 |
 | App crashes | 0 | 0 |
 
+**Enterprise Edition + encryption** (emulator): the demo app rebuilt on `couchbase-lite-android-ee-ktx:4.1.2` with
+its database opened using an `EncryptionKey` (confirmed encrypted on disk: no SQLite header) passes the same
+17 + 32 + 23. An unregistered encrypted database fails cleanly with a "register it" hint.
+
 The MCP suites include a real tap on the device screen (attributed to `source: app`), on-screen assertions that
 agent writes render, app kills in the middle of a long-poll, adb server restarts, two concurrent clients and
 forced Doze.
@@ -408,7 +413,7 @@ forced Doze.
 
 | Component | Tested | Expected to work |
 |---|---|---|
-| Couchbase Lite for Android | **4.1.2 CE** (the latest release as of 2026-09-29) | 4.x CE/EE. 3.2 shares the collection APIs but is untested; partial indexes need 4.0+ |
+| Couchbase Lite for Android | **4.1.2 CE** and **4.1.2 EE with an encrypted database** (the latest release as of 2026-09-29) | 4.x. 3.2 shares the collection APIs but is untested; partial indexes need 4.0+ |
 | Android | 14 (emulator), 17 (Pixel 8a) | minSdk 24+ |
 | MCP clients | Claude Code | Any stdio MCP client |
 | Host OS | Linux | macOS / Windows (plain Node + adb, but untested) |
@@ -443,9 +448,11 @@ docs/              Design notes, tool reference, bridge API, how the demo was ma
 release-side `DebugHooks` stub is a no-op. You can check your release APK: it contains no `io.github.cblmcp.bridge`
 classes.
 
-**Does it work with the Enterprise Edition?** The bridge compiles against the Couchbase Lite API with
-`compileOnly` and uses whichever edition your app ships. Encrypted databases should work when you register the instance
-you opened with your key, but EE hasn't been tested yet.
+**Does it work with the Enterprise Edition and encrypted databases?** Yes, tested with Couchbase Lite EE 4.1.2 and an
+encrypted database. The same bridge artifact is used: it compiles against the Couchbase Lite API with `compileOnly`
+and runs on whichever edition your app ships. Register the instance you opened with your `EncryptionKey`; the key
+never leaves your app. An encrypted database the app didn't register can't be opened by the bridge, and you get a
+clear error instead.
 
 **Can it write to a database while my app is using it?** Yes. That's the point: it writes through your app's own
 `Database` instance, with Couchbase Lite's normal transactions and conflict handling.

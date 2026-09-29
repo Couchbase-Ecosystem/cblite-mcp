@@ -59,11 +59,12 @@ down is an alternative, but it's slower and can't reach local-only data.
   If the app rewrites the same document inside that window, the event can be labelled `bridge`.
 - **Unregistered databases** are opened as a second `Database` instance. Reads and writes on that path were
   tested manually; I haven't verified that the app's live queries fire for writes made through a second instance. Register the instance to be
-  safe. Encrypted (EE) databases can only be reached through registration, because the bridge doesn't know the key.
+  safe. Encrypted (EE) databases can only be reached through registration, because the bridge doesn't know the key; opening an
+  unregistered one returns a 400 that says so. Tested with EE 4.1.2.
 - **Blobs inside `body`** (`{"@type": "blob", ...}`) aren't converted into Blobs on write. Use `cbl_put_blob`.
 - **Replicator tools** (`cbl_replicators`, `cbl_replicator_control`) are implemented but untested: the demo app has
   no Sync Gateway.
-- **Versions.** Built and tested only with Couchbase Lite CE 4.1.2 on an Android 14 (API 34) emulator. The library
+- **Versions.** Built and tested with Couchbase Lite 4.1.2, both CE and EE (EE with an encrypted database), on an Android 14 (API 34) emulator. The library
   compiles against 4.1.2 with `compileOnly`. 3.2 shares the collection APIs, but partial indexes (`where`) need 4.0+.
   3.x is untested.
 - **mobile-mcp conflict.** mobile-mcp leaves a `com.mobilenext.mobilecli.DeviceServer` process that holds the
