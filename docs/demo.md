@@ -10,7 +10,8 @@ The video is a recording of a real session. Nothing in the agent's output was sc
    (`adb emu screenrecord`, in chained 170 s segments). On-device `screenrecord` produced almost no frames on this
    headless emulator.
 3. Run six prompts through headless Claude Code, one `claude -p` call each, all resuming the same session:
-   - `--mcp-config demo/mcp.json --strict-mcp-config`: only the `cbl` and `mobile` servers
+   - `--mcp-config demo/mcp.json --strict-mcp-config`: only the `cbl` and `mobile` servers. `demo/mcp.json` runs the
+     published npm package (`npx -y @couchbase-ecosystem/cblite-mcp@0.1.0`)
    - `--disallowedTools Bash Read Edit Write Glob Grep WebFetch WebSearch Agent NotebookEdit`: no shell, files or
      web, so the agent couldn't read the app's source and had to learn everything through MCP
    - `--append-system-prompt`: "keep every final reply to at most 3 short sentences" (for readability on video),
@@ -55,7 +56,11 @@ was blocked by permissions. That's why the final run disables those tools and ex
 
 Reproduce:
 
+The demo app itself consumes the published `cbl-bridge-0.1.0.aar` from the GitHub release (downloaded and
+checksum-verified by Gradle), just like a developer's app would.
+
 ```bash
+(cd android && ./gradlew :demo-app:installDebug)  # builds Brew Board against the released AAR
 python3 demo/record_demo.py                   # needs the demo app installed on emulator-5554
 python3 demo/render_prep.py demo/run/<timestamp>
 cd demo/video && npm install && npx remotion render DemoVideo out/cbl-mcp-demo.mp4

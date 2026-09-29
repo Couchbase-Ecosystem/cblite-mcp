@@ -152,6 +152,10 @@ cd android && ./gradlew :demo-app:installDebug && cd ..
 adb shell am start -n io.github.cblmcp.brewboard/.MainActivity
 claude mcp add cbl -- node "$PWD/mcp-server/dist/index.js"
 ```
+
+The demo app builds against the **published** `cbl-bridge` AAR from the GitHub release (downloaded and
+checksum-verified by Gradle), exactly like your own app would. Working on the library itself? Add
+`-PbridgeFromSource` to use the local module instead.
 </details>
 
 ## Add it to your own app
@@ -451,7 +455,7 @@ Details and the reasoning behind each: [docs/design.md](docs/design.md#limitatio
 ```
 android/
   cbl-bridge/      Android library (debugImplementation): HTTP server, API, change feed
-  demo-app/        Brew Board: Compose sample app on Couchbase Lite 4.1.2
+  demo-app/        Brew Board: Compose sample app on Couchbase Lite 4.1.2, built against the released cbl-bridge AAR
 mcp-server/        Node/TypeScript MCP server (npm: @couchbase-ecosystem/cblite-mcp) + end-to-end tests
 scripts/           Bridge smoke test and adversarial test suite
 demo/              Demo recording pipeline, Remotion video project, final video

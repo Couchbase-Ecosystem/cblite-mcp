@@ -1,9 +1,10 @@
 {
   "mcpServers": {
     "cbl": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "../mcp-server/dist/index.js"
+        "-y",
+        "@couchbase-ecosystem/cblite-mcp@0.1.0"
       ],
       "env": {
         "ANDROID_SERIAL": "emulator-5554",
