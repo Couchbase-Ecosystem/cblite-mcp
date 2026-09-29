@@ -57,8 +57,8 @@ down is an alternative, but it's slower and can't reach local-only data.
   on a real user's phone are out of reach.
 - **Change attribution is a heuristic.** It matches document ids written by the bridge within the last 5 seconds.
   If the app rewrites the same document inside that window, the event can be labelled `bridge`.
-- **Unregistered databases** are opened as a second `Database` instance. I haven't verified that the app's live
-  queries fire for writes made through that second instance. Register the instance to be
+- **Unregistered databases** are opened as a second `Database` instance. Reads and writes on that path were
+  tested manually; I haven't verified that the app's live queries fire for writes made through a second instance. Register the instance to be
   safe. Encrypted (EE) databases can only be reached through registration, because the bridge doesn't know the key.
 - **Blobs inside `body`** (`{"@type": "blob", ...}`) aren't converted into Blobs on write. Use `cbl_put_blob`.
 - **Replicator tools** (`cbl_replicators`, `cbl_replicator_control`) are implemented but untested: the demo app has

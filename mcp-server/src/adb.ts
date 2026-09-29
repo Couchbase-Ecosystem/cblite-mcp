@@ -68,6 +68,11 @@ export async function runAsCat(serial: string, pkg: string, path: string): Promi
   return out;
 }
 
+export async function isInstalled(serial: string, pkg: string): Promise<boolean> {
+  const out = await adb(["shell", "pm", "path", pkg], serial).catch(() => "");
+  return out.includes("package:");
+}
+
 export async function launchApp(serial: string, pkg: string): Promise<void> {
   await adb(["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"], serial);
 }

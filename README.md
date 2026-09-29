@@ -104,7 +104,7 @@ are added, both labelled on screen. The whole six-step session cost $0.52. Detai
 
 ```bash
 scripts/bridge_smoke_test.py            # 17 checks against the bridge's HTTP API (needs the demo app running)
-cd mcp-server && npm test               # 6 end-to-end MCP tests incl. a real UI tap attributed to the app
+cd mcp-server && npm test               # 16 end-to-end MCP tests: all 20 tools, UI assertions, read-only mode, auth, restart
 ```
 
 Both pass against Brew Board on an API 34 emulator with Couchbase Lite CE 4.1.2.

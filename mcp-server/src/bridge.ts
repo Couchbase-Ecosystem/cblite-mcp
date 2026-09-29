@@ -1,4 +1,4 @@
-import { forward, launchApp, listDevices, removeForward, runAsCat } from "./adb.js";
+import { forward, isInstalled, launchApp, listDevices, removeForward, runAsCat } from "./adb.js";
 
 export const DEFAULT_DEVICE_PORT = 47111;
 const PORT_RANGE = 10;
@@ -103,6 +103,9 @@ export class BridgeClient {
     if (match.length === 0 && wantPkg && opts.launch !== false) {
       const devices = (await listDevices()).filter((d) => d.state === "device" && (!wantSerial || d.serial === wantSerial));
       if (devices.length === 1) {
+        if (!(await isInstalled(devices[0].serial, wantPkg))) {
+          throw new BridgeError(`Package ${wantPkg} is not installed on ${devices[0].serial}. Install a debug build that includes cbl-bridge first.`);
+        }
         await launchApp(devices[0].serial, wantPkg);
         for (let i = 0; i < 20 && match.length === 0; i++) {
           await new Promise((r) => setTimeout(r, 500));
