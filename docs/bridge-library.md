@@ -5,10 +5,14 @@ Package `io.github.cblmcp.bridge`, min SDK 24, no runtime dependencies. It compi
 
 ## Integration
 
+```bash
+./gradlew :cbl-bridge:publishToMavenLocal   # from android/ in this repo -> io.github.cblmcp:cbl-bridge:0.1.0
+```
+
 ```kotlin
-// app/build.gradle.kts
+// app/build.gradle.kts (add mavenLocal() to your repositories)
 dependencies {
-    debugImplementation(project(":cbl-bridge"))   // until it's published: include the module in settings.gradle.kts
+    debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")
 }
 ```
 

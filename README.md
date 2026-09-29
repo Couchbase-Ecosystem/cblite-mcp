@@ -1,117 +1,465 @@
-# Couchbase Lite MCP
+# cblite-mcp
 
-Let an AI agent query, seed and edit the **live Couchbase Lite database inside a running Android app**,
-while the app's UI reacts in real time.
+**Give AI agents a live window into the Couchbase Lite database inside your running Android app.**
 
-**Demo video:** [`demo/cbl-mcp-demo.mp4`](demo/cbl-mcp-demo.mp4) (3 min, a real, unedited agent session)
+cblite-mcp is a [Model Context Protocol](https://modelcontextprotocol.io) server plus a tiny, debug-only Android
+library. Together they let Claude Code (or any MCP client) inspect, query, seed and edit your app's Couchbase Lite
+data while the app runs, and every write shows up in the app's UI immediately.
+
+<p align="center">
+  <img src="docs/assets/live-update.gif" alt="An agent seeds six orders through cblite-mcp and the Android app's UI updates live" width="900">
+</p>
+
+<p align="center">
+  <a href="demo/cbl-mcp-demo.mp4"><b>▶ Watch the 3-minute demo</b></a>: a real, unedited agent session driving the sample app.
+</p>
+
+---
+
+## Contents
+
+- [Why](#why)
+- [How it works](#how-it-works)
+- [What an agent can do](#what-an-agent-can-do)
+- [Requirements](#requirements)
+- [Quick start: try the demo app (5 minutes)](#quick-start-try-the-demo-app-5-minutes)
+- [Add it to your own app](#add-it-to-your-own-app)
+- [Connect your MCP client](#connect-your-mcp-client)
+- [Tools](#tools)
+- [Example prompts](#example-prompts)
+- [Configuration](#configuration)
+- [Pairing with mobile-mcp for UI-driven tests](#pairing-with-mobile-mcp-for-ui-driven-tests)
+- [Security model](#security-model)
+- [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
+- [Compatibility](#compatibility)
+- [Limitations](#limitations)
+- [Repository layout](#repository-layout)
+- [FAQ](#faq)
+- [Further documentation](#further-documentation)
+
+---
+
+## Why
+
+When you build a mobile app on Couchbase Lite, an agent working on it needs to see and change the app's data:
+seed realistic test data, check what a screen actually wrote, reproduce a bug that only happens with certain
+documents, or answer "is this query using an index?".
+
+**Plain `adb` doesn't get you there:**
+
+- **The data isn't readable as plain SQLite.** Couchbase Lite stores each document as a binary [Fleece](https://github.com/couchbase/fleece)
+  blob inside SQLite. `adb shell sqlite3` shows unreadable bytes, and writes fail or corrupt the database, because
+  the schema's triggers call functions that only exist inside Couchbase Lite.
+- **The file-copy workaround is offline only.** You can `adb pull` the database and use the `cblite` CLI, but writing
+  means stopping the app, pushing the file back and restarting. The running UI never sees the change, and your
+  live queries and change listeners never fire.
+
+**cblite-mcp works through the app's own open `Database` instance.** Writes land exactly as if the app made them:
+live queries re-run, the UI updates, replication picks up the change, and nothing restarts.
+[docs/design.md](docs/design.md) has the full comparison.
+
+## How it works
 
 ```
-┌──────────── your machine ────────────┐        ┌──────── Android device / emulator (debug build) ────────┐
-│ Claude Code / any MCP client         │        │                                                         │
-│      │ MCP (stdio)                   │  adb   │  cbl-bridge  ──►  Couchbase Lite  ──►  App UI           │
-│   cbl-mcp  ─────────────────────────────forward──► 127.0.0.1      (the app's own        (live queries   │
-│      (Node, 20 tools)                │        │   + token         Database)             re-render)      │
-│   mobile-mcp (optional, taps the UI) ─────────────────────────────────────────────────────►             │
-└──────────────────────────────────────┘        └─────────────────────────────────────────────────────────┘
+┌──────────────── your machine ────────────────┐          ┌──────── Android device / emulator (debug build) ────────┐
+│                                               │          │                                                         │
+│  Claude Code / Cursor / any MCP client        │          │   ┌─────────────┐     ┌────────────────┐   ┌──────────┐ │
+│          │ MCP (stdio)                        │   adb    │   │ cbl-bridge  │────►│ Couchbase Lite │──►│  App UI  │ │
+│          ▼                                    │ forward  │   │ 127.0.0.1   │     │ (the app's own │   │ (live    │ │
+│  ┌──────────────────┐   JSON over HTTP  ──────┼──────────┼──►│ + token     │     │  Database)     │   │ queries) │ │
+│  │ cbl-mcp (Node)   │                         │          │   └─────────────┘     └────────────────┘   └──────────┘ │
+│  │ 20 tools         │                         │          │                                                         │
+│  └──────────────────┘                         │          │                                                         │
+└───────────────────────────────────────────────┘          └─────────────────────────────────────────────────────────┘
 ```
 
-Three pieces:
+1. **`cbl-bridge`** is an Android library you add with `debugImplementation`. It has no dependencies and starts
+   itself when the app process starts. It serves a small JSON API on `127.0.0.1` inside the app, protected by a
+   random per-process token.
+2. **`cbl-mcp`** is a Node MCP server on your machine. It finds bridged apps over adb, reads the token through
+   `adb run-as` (which only works on debuggable builds), forwards a port, and exposes 20 tools.
+3. **Your app** makes one call, `CblBridge.register(database)`, from debug-only code, so the bridge uses the exact
+   `Database` instance your UI is observing.
 
-| Piece | What it is |
+Release builds don't include the library, its startup ContentProvider or its server. This was checked on the demo's
+release APK: 0 bridge classes.
+
+## What an agent can do
+
+- **Understand your data:** list databases, scopes, collections, counts and indexes, and infer a collection's
+  schema from real documents (`cbl_describe_collection`).
+- **Query:** run SQL++ with parameters, and `EXPLAIN` queries to check index usage.
+- **Change data safely:** create, replace, merge (JSON Merge Patch), delete or purge documents. Batches run in a
+  single transaction (all or nothing), and optimistic concurrency is supported via `expectedRevision`.
+- **Watch the app:** a change feed tags every change as made by the **app** (for example a user tapping a button)
+  or by the **agent**, so "tap Save and verify what got written" becomes a real test.
+- **Manage structure:** create or delete collections and value or full-text indexes, and read or write blobs.
+- **Control sync:** check and start/stop replicators the app registers.
+
+## Requirements
+
+| | |
 |---|---|
-| [`android/cbl-bridge`](android/cbl-bridge) | Tiny Android library (no dependencies) added with `debugImplementation`. Starts a token-protected HTTP server on `127.0.0.1` inside the app and serves the app's own `Database` instance. |
-| [`mcp-server`](mcp-server) | Node MCP server (`cbl-mcp`). Finds bridged apps over adb, reads the token with `run-as`, forwards a port and exposes 20 tools. |
-| [`android/demo-app`](android/demo-app) | **Brew Board**, a Jetpack Compose coffee-shop order board on Couchbase Lite 4.1 with live queries. Used in the demo video. |
+| **Your app** | Android, Couchbase Lite for Android **4.x**, CE or EE (tested with 4.1.2), a **debuggable** (debug) build, minSdk 24+ |
+| **Your machine** | Node.js **20+**, Android platform-tools (`adb`) on `PATH` or `ANDROID_HOME` set, JDK 17 to build the Android parts |
+| **Device** | Emulator or physical device with USB debugging on |
+| **MCP client** | Claude Code (tested), or any client that supports stdio MCP servers |
 
-## Why not just adb?
+## Quick start: try the demo app (5 minutes)
 
-Couchbase Lite stores documents as binary Fleece blobs inside SQLite, so `adb shell sqlite3` can't read or
-safely write them. You can `adb pull` the `.cblite2` folder and use the `cblite` CLI, but writes then need
-the app stopped, the file pushed back and the app restarted, and the running UI never sees the change.
-The bridge writes **through the app's live `Database`**: live queries fire, the UI updates, replication
-treats the edit like any local change, and nothing restarts. See [docs/design.md](docs/design.md) for the
-full comparison.
+The repo includes **Brew Board**, a small Jetpack Compose coffee-shop order board built on Couchbase Lite 4.1.2
+with live queries. It's the fastest way to see everything working.
 
-## Quick start
+```bash
+git clone https://github.com/Couchbase-Ecosystem/cblite-mcp.git
+cd cblite-mcp
 
-**1. Add the bridge to your app's debug build** (`app/build.gradle.kts`):
+# 1. Build the MCP server
+cd mcp-server && npm ci && npm run build && cd ..
+
+# 2. Build and install the demo app on a running emulator or connected device
+cd android && ./gradlew :demo-app:installDebug && cd ..
+adb shell am start -n io.github.cblmcp.brewboard/.MainActivity
+
+# 3. Register the MCP server with Claude Code
+claude mcp add cbl -- node "$PWD/mcp-server/dist/index.js"
+```
+
+Now start `claude` and try:
+
+> *What's in this app's Couchbase Lite database? How is an order structured?*
+>
+> *Seed a realistic morning rush: 6 new orders using real menu items and prices.*
+>
+> *Move the oldest order to brewing and add an oat-milk note to the biggest one.*
+
+Watch the orders appear and change on the device as the agent works.
+
+> **More than one device attached?** Pin one: `claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -- node "$PWD/mcp-server/dist/index.js"`
+
+## Add it to your own app
+
+### 1. Add the library to debug builds
+
+The library isn't on Maven Central yet. Publish it to your local Maven repository from a checkout of this repo:
+
+```bash
+cd cblite-mcp/android
+./gradlew :cbl-bridge:publishToMavenLocal     # -> io.github.cblmcp:cbl-bridge:0.1.0 in ~/.m2
+```
+
+Then in your app:
 
 ```kotlin
-dependencies {
-    implementation("com.couchbase.lite:couchbase-lite-android-ktx:4.1.2")   // what you already have
-    debugImplementation(project(":cbl-bridge"))                               // or the published artifact
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        mavenLocal()          // for cbl-bridge
+    }
 }
 ```
 
-It starts automatically. It can then find any database in the app's `files/` directory, but for full fidelity
-(the UI reacting to the agent's writes) hand it the instance your app already has open. Do that from a
-debug-only source file:
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation("com.couchbase.lite:couchbase-lite-android-ktx:4.1.2")   // your existing Couchbase Lite (CE or EE)
+    debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")               // debug builds only
+}
+```
+
+<details>
+<summary>Alternative: include the module from source</summary>
 
 ```kotlin
-// src/debug/java/.../DebugHooks.kt
-object DebugHooks { fun onDatabaseOpened(db: Database) = CblBridge.register(db) }
+// settings.gradle.kts
+include(":cbl-bridge")
+project(":cbl-bridge").projectDir = file("../cblite-mcp/android/cbl-bridge")
 
-// src/release/java/.../DebugHooks.kt
-object DebugHooks { fun onDatabaseOpened(db: Database) = Unit }
+// app/build.gradle.kts
+dependencies { debugImplementation(project(":cbl-bridge")) }
 ```
 
-Release builds don't contain the bridge classes, its ContentProvider or its server. This was checked on the
-demo's release APK.
+The module compiles against Couchbase Lite with `compileOnly`, so your app's own Couchbase Lite version is the one
+used at runtime.
+</details>
 
-**2. Build the MCP server and register it:**
+`debugImplementation` is a standard Gradle configuration: the dependency exists only in debug builds and never
+reaches your release APK/AAB.
+
+### 2. Hand the bridge your Database
+
+Release code can't reference a debug-only library, so use the usual `src/debug` / `src/release` split with one tiny
+file in each:
+
+```kotlin
+// app/src/debug/java/com/example/app/DebugHooks.kt
+package com.example.app
+
+import com.couchbase.lite.Database
+import io.github.cblmcp.bridge.CblBridge
+
+object DebugHooks {
+    fun onDatabaseOpened(db: Database) = CblBridge.register(db)
+}
+```
+
+```kotlin
+// app/src/release/java/com/example/app/DebugHooks.kt
+package com.example.app
+
+import com.couchbase.lite.Database
+
+object DebugHooks {
+    fun onDatabaseOpened(db: Database) = Unit
+}
+```
+
+Call it wherever you open your database:
+
+```kotlin
+CouchbaseLite.init(context)
+val database = Database("myapp")
+DebugHooks.onDatabaseOpened(database)
+```
+
+Optionally let agents see and control replication:
+
+```kotlin
+// in the debug DebugHooks
+fun onReplicatorCreated(name: String, replicator: Replicator) = CblBridge.registerReplicator(name, replicator)
+```
+
+> **Skipping step 2 still works, with caveats.** The bridge finds any `*.cblite2` database in the app's `files/`
+> directory and opens its own instance on demand. Reads and writes work, but the UI may not react live, and
+> encrypted (EE) databases need registration because the bridge doesn't know the key.
+
+### 3. Run and connect
+
+Install your debug build, open the app and look for this line in Logcat:
+
+```
+I CblBridge: Couchbase Lite MCP bridge listening on 127.0.0.1:47111 for com.example.app
+```
+
+Then [connect your MCP client](#connect-your-mcp-client) and ask: *"What's in this app's database?"*
+
+## Connect your MCP client
+
+Build the server once (`cd mcp-server && npm ci && npm run build`), then point your client at
+`mcp-server/dist/index.js` using its **absolute path**.
+
+**Claude Code**
 
 ```bash
-cd mcp-server && npm install && npm run build
-claude mcp add cbl -- node "$PWD/dist/index.js"
-# optional: pin a device / app
-claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.app -- node "$PWD/dist/index.js"
+claude mcp add cbl -- node /absolute/path/to/cblite-mcp/mcp-server/dist/index.js
+# pin a device and/or app:
+claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.app -- node /absolute/path/to/cblite-mcp/mcp-server/dist/index.js
 ```
 
-**3. Run your debug build and ask:** *"What's in this app's database?"*, *"Seed 20 realistic orders"*,
-*"Tap Checkout and verify the order document the app wrote"*.
+**Claude Desktop**: `claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "cbl": {
+      "command": "node",
+      "args": ["/absolute/path/to/cblite-mcp/mcp-server/dist/index.js"],
+      "env": { "CBL_PACKAGE": "com.example.app" }
+    }
+  }
+}
+```
+
+**Cursor**: `.cursor/mcp.json` (same shape as above). **VS Code**: `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "cbl": { "type": "stdio", "command": "node", "args": ["/absolute/path/to/cblite-mcp/mcp-server/dist/index.js"] }
+  }
+}
+```
+
+Claude Code is the client this was tested with; the others use the standard stdio setup.
 
 ## Tools
 
-| Read | Write (hidden when `CBL_MCP_READ_ONLY=1`) |
+| Tool | What it does |
 |---|---|
-| `cbl_list_bridges`, `cbl_connect`, `cbl_info` | `cbl_put_document` (replace / JSON merge patch / create, optimistic concurrency) |
-| `cbl_describe_collection`: infers schema by sampling | `cbl_delete_document` (delete or purge) |
-| `cbl_query` (SQL++ with `$params`), `cbl_explain` | `cbl_batch`: many writes in one transaction |
-| `cbl_get_document`, `cbl_get_blob` | `cbl_put_blob` |
-| `cbl_list_indexes` | `cbl_create_collection`, `cbl_delete_collection` |
-| `cbl_changes`: change feed; each change is tagged as written by the **app** or the **agent** | `cbl_create_index` (value / full-text), `cbl_delete_index` |
-| `cbl_replicators` | `cbl_replicator_control` |
+| `cbl_list_bridges` | Scan every adb device for running apps that include the bridge |
+| `cbl_connect` | Pick a device/app explicitly; launches the app if it isn't running |
+| `cbl_info` | Couchbase Lite version, device clock, databases, collections (counts, indexes), replicators |
+| `cbl_describe_collection` | Infer a collection's schema from sampled documents: field paths, types, frequency, examples |
+| `cbl_query` | Run SQL++ with `$parameters`; row limit plus a response-size cap |
+| `cbl_explain` | Show a query plan: does it use an index? |
+| `cbl_get_document` | A document with its revision, sequence and expiration |
+| `cbl_put_document` | Create / replace / merge-patch a document, optionally with `expectedRevision` |
+| `cbl_delete_document` | Delete (tombstone, replicates) or purge (local only) |
+| `cbl_batch` | Many writes in one transaction: all or nothing |
+| `cbl_changes` | Change feed, each change tagged `app` or `bridge`; long-polls; reports gaps and app restarts |
+| `cbl_get_blob` / `cbl_put_blob` | Read or attach binary content |
+| `cbl_list_indexes` / `cbl_create_index` / `cbl_delete_index` | Value and full-text indexes (partial indexes with `where`) |
+| `cbl_create_collection` / `cbl_delete_collection` | Manage collections and scopes |
+| `cbl_replicators` / `cbl_replicator_control` | Status, start and stop of replicators the app registered |
 
-Full reference: [docs/mcp-tools.md](docs/mcp-tools.md). Library and HTTP API: [docs/bridge-library.md](docs/bridge-library.md).
+Collections are named `scope.collection` (e.g. `shop.orders`), and SQL++ uses the same names (`FROM shop.orders`).
+Parameters and responses are documented in [docs/mcp-tools.md](docs/mcp-tools.md).
+
+## Example prompts
+
+- *"What's in this app's database? Explain how a user document is structured."*
+- *"Seed 50 realistic customers, including edge cases: empty names, emoji, very long addresses."*
+- *"Tap Checkout in the app (mobile-mcp), then show me exactly which documents the app wrote."*
+- *"Is the query behind the orders screen using an index? If not, create one and prove it with EXPLAIN."*
+- *"Find orders whose total doesn't match the sum of their items."*
+- *"Delete everything you created in this session."*
+
+## Configuration
+
+**MCP server (environment variables)**
+
+| Variable | Effect |
+|---|---|
+| `ANDROID_SERIAL` | Only use this device (e.g. `emulator-5554`) |
+| `CBL_PACKAGE` | Connect to this app; it's launched (or brought to the foreground) if needed |
+| `CBL_MCP_READ_ONLY=1` | Register only read tools |
+| `CBL_MCP_DEBUG=1` | Log every bridge call and reconnect step to stderr |
+| `ADB` / `ANDROID_HOME` | Where to find `adb` |
+
+**Bridge (optional `<meta-data>` in your app's `src/debug/AndroidManifest.xml`)**
+
+```xml
+<application>
+    <meta-data android:name="cblbridge.readOnly" android:value="true" />   <!-- reject all writes (HTTP 403) -->
+    <meta-data android:name="cblbridge.port" android:value="47111" />      <!-- first port tried (+9 fallbacks) -->
+    <meta-data android:name="cblbridge.autoStart" android:value="false" /> <!-- then call CblBridge.start(context) -->
+</application>
+```
+
+## Pairing with mobile-mcp for UI-driven tests
+
+[mobile-mcp](https://github.com/mobile-next/mobile-mcp) lets an agent tap, swipe and read the screen.
+Combined with cblite-mcp, the agent can run a full loop: *act in the UI → watch `cbl_changes` → verify the exact
+document the app wrote.*
+
+```bash
+claude mcp add mobile -- npx -y @mobilenext/mobile-mcp@latest
+```
+
+This is what step 4 of the demo video shows: the agent taps **Start**, and the change feed reports
+`source: app` with the `status` and `startedAt` fields the app wrote.
 
 ## Security model
 
-- The bridge only exists in builds that include it (`debugImplementation`), and only listens on `127.0.0.1`.
-- Every request except `/hello` needs a random per-process token. The token is stored in the app's private
-  `files/` directory, so reading it takes `adb run-as`, which works only on debuggable builds. Other apps on
-  the device can reach the port but not the token.
-- `cblbridge.readOnly` manifest meta-data (bridge side) and `CBL_MCP_READ_ONLY=1` (MCP side) turn off writes.
+- **Debug builds only.** The bridge is a `debugImplementation` dependency, so release builds don't contain it.
+- **Localhost only.** The bridge binds to `127.0.0.1`; `adb forward` is the only way in from your machine.
+- **Token-authenticated.** Every request except `/hello` needs a random per-process token, compared in constant
+  time. The token lives in the app's private storage, and reading it takes `adb run-as`, which only works on
+  debuggable apps. Other apps on the device can reach the port but not the token.
+- **Read-only modes.** Use `cblbridge.readOnly` (app side) or `CBL_MCP_READ_ONLY=1` (MCP side).
+- **Defensive by design.** The server runs inside your app, so every per-connection failure is contained and can't
+  crash it. Request sizes, header sizes, worker threads and response sizes are all bounded, slow clients time out,
+  and invalid input gets a 4xx.
 
-## The demo
+## Troubleshooting
 
-`demo/record_demo.py` runs six plain-English prompts through headless Claude Code (`claude -p`, Opus 5.5) with
-only the `cbl` and `mobile` MCP servers enabled. Shell, file and web tools are disabled, so the agent works
-purely through MCP. The emulator screen is recorded at the same time. `demo/render_prep.py` and the Remotion
-project in `demo/video` turn the run into the video. Idle model-thinking time is shown at 4× and reading pauses
-are added, both labelled on screen. The whole six-step session cost $0.52. Details: [docs/demo.md](docs/demo.md).
+| Symptom | Fix |
+|---|---|
+| `No running app with the Couchbase Lite bridge found` | Is the **debug** build installed and open? Check Logcat for `CblBridge: … listening`. Set `CBL_PACKAGE` so the server can launch it. |
+| `Package … is not installed` | Install your debug build, or check the `CBL_PACKAGE` spelling. |
+| `run-as: package not debuggable` | You're running a release build. Use a debug build. |
+| `Several bridges found` | Several apps or devices have the bridge. Set `ANDROID_SERIAL` and/or `CBL_PACKAGE`, or call `cbl_connect`. |
+| `adb: more than one device/emulator` | Set `ANDROID_SERIAL`. |
+| App running but bridge not answering; the error mentions Doze | The device is in Doze and the app is in the background, so Android blocks its network, localhost included. Bring the app to the foreground, or exempt it: `adb shell dumpsys deviceidle whitelist +com.example.app`. |
+| `Specify 'database'` | The app has several databases; pass `database` to the tool. |
+| Writes work but the UI doesn't update | Register your `Database` instance with `CblBridge.register(db)` (step 2). |
+| `A string value contains a NUL character` | Couchbase Lite for Android truncates strings at `\u0000`, so the bridge refuses them rather than store corrupted data. |
+| `uiautomator dump` fails after using mobile-mcp | mobile-mcp leaves a helper holding the UI automation slot: `adb shell pkill -f com.mobilenext.mobilecli.DeviceServer`. |
+| Anything else | Run the server with `CBL_MCP_DEBUG=1` and check stderr; check Logcat for the `CblBridge` tag. |
 
-## Tests
+## Testing
+
+Every suite runs against the real demo app on a device. Nothing is mocked.
 
 ```bash
-export ANDROID_SERIAL=<device>          # the demo app must be installed and running
-scripts/bridge_smoke_test.py            # 17 checks of the bridge's HTTP API
+export ANDROID_SERIAL=<device>          # demo app installed and running
+scripts/bridge_smoke_test.py            # 17 checks of the bridge HTTP API
 scripts/adversarial_test.py             # 32 attacks: malformed HTTP, slow clients, hostile JSON, races, overload
-cd mcp-server && npm test               # 23 end-to-end MCP tests: all 20 tools, on-screen assertions, lifecycle chaos
+cd mcp-server && npm test               # 23 end-to-end MCP tests: all 20 tools, on-screen checks, lifecycle chaos
 ```
 
-All pass, with zero app crashes, on a **Pixel 8a (Android 17)** and an **API 34 emulator**, using Couchbase Lite CE
-4.1.2 (the latest release as of 2026-09-29).
+Latest results (2026-09-29), identical on both devices:
 
-## Status & limitations
+| | Pixel 8a · Android 17 | Emulator · Android 14 (API 34) |
+|---|---|---|
+| Bridge API | 17/17 | 17/17 |
+| Adversarial | 32/32 | 32/32 |
+| MCP end-to-end | 23/23 | 23/23 |
+| App crashes | 0 | 0 |
 
-v0.1, built and tested in one session. Known gaps are listed in [docs/design.md#limitations](docs/design.md#limitations).
+The MCP suites include a real tap on the device screen (attributed to `source: app`), on-screen assertions that
+agent writes render, app kills in the middle of a long-poll, adb server restarts, two concurrent clients and
+forced Doze.
+
+## Compatibility
+
+| Component | Tested | Expected to work |
+|---|---|---|
+| Couchbase Lite for Android | **4.1.2 CE** (the latest release as of 2026-09-29) | 4.x CE/EE. 3.2 shares the collection APIs but is untested; partial indexes need 4.0+ |
+| Android | 14 (emulator), 17 (Pixel 8a) | minSdk 24+ |
+| MCP clients | Claude Code | Any stdio MCP client |
+| Host OS | Linux | macOS / Windows (plain Node + adb, but untested) |
+
+## Limitations
+
+- Debug (debuggable) builds only, by design.
+- `app` vs `bridge` attribution is a heuristic: document ids written by the bridge within the last 5 s.
+- Replicator tools are implemented but haven't been tested against a real Sync Gateway.
+- Android only. An iOS bridge speaking the same HTTP contract would let the same MCP server work on iOS; it's
+  not built yet.
+- Very high connection rates (thousands per second through one `adb forward`) can overwhelm adb's port
+  forwarding, especially on emulators.
+
+Details and the reasoning behind each: [docs/design.md](docs/design.md#limitations).
+
+## Repository layout
+
+```
+android/
+  cbl-bridge/      Android library (debugImplementation): HTTP server, API, change feed
+  demo-app/        Brew Board: Compose sample app on Couchbase Lite 4.1.2
+mcp-server/        Node/TypeScript MCP server (cbl-mcp) + end-to-end tests
+scripts/           Bridge smoke test and adversarial test suite
+demo/              Demo recording pipeline, Remotion video project, final video
+docs/              Design notes, tool reference, bridge API, how the demo was made
+```
+
+## FAQ
+
+**Will this end up in my production app?** No. `debugImplementation` keeps it out of release builds, and the
+release-side `DebugHooks` stub is a no-op. You can check your release APK: it contains no `io.github.cblmcp.bridge`
+classes.
+
+**Does it work with the Enterprise Edition?** The bridge compiles against the Couchbase Lite API with
+`compileOnly` and uses whichever edition your app ships. Encrypted databases should work when you register the instance
+you opened with your key, but EE hasn't been tested yet.
+
+**Can it write to a database while my app is using it?** Yes. That's the point: it writes through your app's own
+`Database` instance, with Couchbase Lite's normal transactions and conflict handling.
+
+**Does it sync my test data to the server?** If the app is running a push replicator, agent writes replicate like
+any local change. Use `purge` instead of `delete` for local-only cleanup, and consider a read-only mode against
+shared environments.
+
+**Why HTTP and not the MCP protocol directly on the device?** The on-device part stays tiny and has no dependencies,
+while discovery, auth and recovery logic live on your machine, where they're easy to update.
+
+## Further documentation
+
+- [docs/design.md](docs/design.md): why not plain adb, architecture, limitations
+- [docs/mcp-tools.md](docs/mcp-tools.md): tool reference and environment variables
+- [docs/bridge-library.md](docs/bridge-library.md): library integration and the on-device HTTP API
+- [docs/demo.md](docs/demo.md): how the demo video was recorded and edited, and how to reproduce it
