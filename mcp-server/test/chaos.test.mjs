@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function mcp() {
   const c = new Client({ name: "chaos-test", version: "0" });
-  await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG } }));
+  await c.connect(new StdioClientTransport({ command: "node", args: [process.env.CBL_MCP_ENTRY ?? "dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG } }));
   return c;
 }
 async function call(c, name, args = {}) {

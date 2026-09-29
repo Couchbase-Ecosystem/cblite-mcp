@@ -11,7 +11,7 @@ const adb = (...a) => execFileSync("adb", a, { encoding: "utf8" });
 
 async function mcp(env = {}) {
   const c = new Client({ name: "coverage-test", version: "0" });
-  await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG, ...env } }));
+  await c.connect(new StdioClientTransport({ command: "node", args: [process.env.CBL_MCP_ENTRY ?? "dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG, ...env } }));
   return c;
 }
 async function call(c, name, args = {}) {

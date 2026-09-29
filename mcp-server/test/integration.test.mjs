@@ -44,7 +44,7 @@ function tapText(label) {
 before(async () => {
   adb("shell", "am", "start", "-n", `${PKG}/.MainActivity`);
   client = new Client({ name: "integration-test", version: "0" });
-  await client.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG } }));
+  await client.connect(new StdioClientTransport({ command: "node", args: [process.env.CBL_MCP_ENTRY ?? "dist/index.js"], env: { ...process.env, CBL_PACKAGE: PKG } }));
 });
 
 after(async () => {
