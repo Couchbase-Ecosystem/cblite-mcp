@@ -85,7 +85,10 @@ internal class ChangeFeed(private val capacity: Int = 2000) {
                 out.put(e)
             }
             val next = if (truncated) out.getJSONObject(out.length() - 1).getLong("seq") else lastSeq
-            return jsonOf("lastSeq" to next, "events" to out, "truncated" to truncated)
+            // Events older than the ring buffer are gone; say so rather than silently skipping them.
+            val oldest = events.firstOrNull()?.getLong("seq") ?: (lastSeq + 1)
+            val gap = since < oldest - 1
+            return jsonOf("lastSeq" to next, "events" to out, "truncated" to truncated, "gap" to gap)
         }
     }
 

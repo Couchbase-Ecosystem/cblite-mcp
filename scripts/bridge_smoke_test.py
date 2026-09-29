@@ -99,4 +99,5 @@ for i in ("smoke-1", "smoke-2"):
 check("cleanup", call("/query", {"sql": "SELECT COUNT(*) AS n FROM shop.orders WHERE META().id LIKE 'smoke-%'"})["rows"][0]["n"] == 0)
 call("/nope", {}, expect=404)
 check("unknown endpoint -> 404", True)
+adb("forward", "--remove", f"tcp:{LOCAL}")
 print(f"\n{passed} checks passed")

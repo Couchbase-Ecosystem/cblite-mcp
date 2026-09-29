@@ -51,7 +51,7 @@ export async function listDevices(): Promise<Device[]> {
 
 /** Forwards a free local port to the device port and returns the local port. */
 export async function forward(serial: string, devicePort: number): Promise<number> {
-  const out = await adb(["forward", "tcp:0", `tcp:${devicePort}`], serial);
+  const out = await adb(["forward", "tcp:0", `tcp:${devicePort}`], serial, 5_000);
   const port = parseInt(out.trim(), 10);
   if (!Number.isFinite(port)) throw new AdbError(`Unexpected adb forward output: ${out}`);
   return port;
@@ -68,11 +68,33 @@ export async function runAsCat(serial: string, pkg: string, path: string): Promi
   return out;
 }
 
-export async function isInstalled(serial: string, pkg: string): Promise<boolean> {
-  const out = await adb(["shell", "pm", "path", pkg], serial).catch(() => "");
-  return out.includes("package:");
+/** true / false, or undefined when adb itself failed (e.g. a slow device) and we genuinely don't know. */
+export async function isInstalled(serial: string, pkg: string): Promise<boolean | undefined> {
+  try {
+    const out = await adb(["shell", "pm", "path", pkg], serial, 4_000);
+    return out.includes("package:");
+  } catch {
+    return undefined;
+  }
 }
 
+export async function pidOf(serial: string, pkg: string): Promise<string | undefined> {
+  const out = await adb(["shell", "pidof", pkg], serial, 4_000).catch(() => "");
+  return out.trim() || undefined;
+}
+
+export async function dozeState(serial: string): Promise<string | undefined> {
+  const out = await adb(["shell", "dumpsys", "deviceidle", "get", "deep"], serial, 4_000).catch(() => "");
+  return out.trim() || undefined;
+}
+
+/** Starts the app, or brings a running instance to the foreground without restarting it. */
 export async function launchApp(serial: string, pkg: string): Promise<void> {
-  await adb(["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"], serial);
+  const resolved = await adb(["shell", "cmd", "package", "resolve-activity", "--brief", "-c", "android.intent.category.LAUNCHER", pkg], serial, 4_000).catch(() => "");
+  const component = resolved.trim().split("\n").pop()?.trim();
+  if (component && component.includes("/")) {
+    await adb(["shell", "am", "start", "-n", component], serial, 5_000);
+  } else {
+    await adb(["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"], serial, 5_000);
+  }
 }

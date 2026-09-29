@@ -4,16 +4,30 @@ import com.couchbase.lite.CouchbaseLiteException
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** org.json value -> plain Kotlin value that Couchbase Lite's setValue()/setData() understands. */
+/**
+ * org.json value -> plain Kotlin value that Couchbase Lite's setValue()/setData() understands.
+ *
+ * Rejects NUL characters: Couchbase Lite for Android (verified on 4.1.2) silently truncates strings and
+ * property names at U+0000 when saving, so "ab\u0000cd" would be stored as "ab". Failing loudly beats
+ * corrupting data.
+ */
 internal fun jsonToNative(value: Any?): Any? = when (value) {
     null, JSONObject.NULL -> null
     is JSONObject -> {
         val map = LinkedHashMap<String, Any?>()
-        for (key in value.keys()) map[key] = jsonToNative(value.get(key))
+        for (key in value.keys()) map[checkNoNul(key, "property name")] = jsonToNative(value.get(key))
         map
     }
     is JSONArray -> (0 until value.length()).map { jsonToNative(value.get(it)) }
+    is String -> checkNoNul(value, "string value")
     else -> value
+}
+
+private fun checkNoNul(s: String, what: String): String {
+    if (s.indexOf('\u0000') >= 0) {
+        throw IllegalArgumentException("A $what contains a NUL character (\\u0000). Couchbase Lite for Android truncates strings at NUL, so the write was refused to avoid storing corrupted data.")
+    }
+    return s
 }
 
 internal fun JSONObject.toNativeMap(): Map<String, Any?> {

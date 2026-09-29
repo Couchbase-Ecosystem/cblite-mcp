@@ -5,6 +5,7 @@ import android.util.Log
 import com.couchbase.lite.Blob
 import com.couchbase.lite.Collection
 import com.couchbase.lite.CouchbaseLite
+import com.couchbase.lite.ConcurrencyControl
 import com.couchbase.lite.CouchbaseLiteException
 import com.couchbase.lite.Database
 import com.couchbase.lite.FullTextIndexConfiguration
@@ -26,16 +27,26 @@ internal class BridgeApi(private val bridge: CblBridge) {
     fun handle(req: HttpRequest, token: String): HttpResponse {
         if (req.path == "/hello") return ok(hello())
         val auth = req.headers["authorization"]?.removePrefix("Bearer ")?.trim() ?: req.headers["x-bridge-token"]
-        if (auth != token) return HttpResponse(401, """{"error":"missing or invalid bridge token"}""")
+        if (auth == null || !java.security.MessageDigest.isEqual(auth.toByteArray(), token.toByteArray())) {
+            return HttpResponse(401, """{"error":"missing or invalid bridge token"}""")
+        }
         return try {
-            val body = if (req.body.isBlank()) JSONObject() else JSONObject(req.body)
+            val body = when {
+                req.body.isBlank() -> JSONObject()
+                req.body.trimStart().startsWith("{") -> JSONObject(req.body)
+                else -> throw ApiException(400, "Request body must be a JSON object")
+            }
             ok(route(req, body))
         } catch (e: ApiException) {
             HttpResponse(e.status, jsonOf("error" to e.message).toString())
         } catch (e: CouchbaseLiteException) {
             HttpResponse(400, errorJson(e))
         } catch (e: org.json.JSONException) {
-            HttpResponse(400, jsonOf("error" to "Invalid JSON: ${e.message}").toString())
+            HttpResponse(400, jsonOf("error" to "Invalid request: ${e.message}").toString())
+        } catch (e: IllegalArgumentException) {
+            HttpResponse(400, errorJson(e))
+        } catch (e: IllegalStateException) {
+            HttpResponse(409, errorJson(e))
         } catch (e: Exception) {
             Log.w(TAG, "${req.method} ${req.path} failed", e)
             HttpResponse(500, errorJson(e))
@@ -47,7 +58,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun route(req: HttpRequest, b: JSONObject): JSONObject = when (req.path) {
         "/info" -> info()
         "/query" -> query(b)
-        "/explain" -> jsonOf("plan" to db(b).createQuery(b.getString("sql")).explain())
+        "/explain" -> jsonOf("plan" to db(b).createQuery(b.req("sql")).explain())
         "/collection/describe" -> describe(b)
         "/collection/create" -> write { createCollection(b) }
         "/collection/delete" -> write { deleteCollection(b) }
@@ -135,7 +146,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
     }
 
     private fun db(b: JSONObject): Database {
-        val requested = b.optString("database").ifEmpty { null }
+        val requested = b.optStr("database")
         val known = allDatabases()
         if (requested == null) {
             if (known.size == 1) return known.values.first()
@@ -161,10 +172,11 @@ internal class BridgeApi(private val bridge: CblBridge) {
 
     /** Accepts "orders", "shop.orders" or "_default". */
     private fun collection(db: Database, b: JSONObject, create: Boolean = false): Collection {
-        val spec = b.optString("collection").ifEmpty { "_default._default" }
-        val dot = spec.indexOf('.')
-        val scope = if (dot >= 0) spec.substring(0, dot) else "_default"
-        val name = if (dot >= 0) spec.substring(dot + 1) else spec
+        val spec = b.optStr("collection") ?: "_default._default"
+        val parts = spec.split('.')
+        if (parts.size > 2 || parts.any { it.isEmpty() }) throw ApiException(400, "Invalid collection '$spec': use 'scope.collection' or 'collection'")
+        val scope = if (parts.size == 2) parts[0] else "_default"
+        val name = parts.last()
         val c = db.getCollection(name, scope)
             ?: if (create) db.createCollection(name, scope) else throw ApiException(404, "No collection '$scope.$name' in '${db.name}'")
         bridge.changes.watch(db.name, c)
@@ -177,7 +189,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
         val db = db(b)
         val limit = b.optInt("limit", 100).coerceIn(1, 5000)
         val started = System.nanoTime()
-        val q = db.createQuery(b.getString("sql"))
+        val q = db.createQuery(b.req("sql"))
         b.optJSONObject("parameters")?.let { p ->
             val params = Parameters()
             for (k in p.keys()) params.setValue(k, jsonToNative(p.get(k)))
@@ -185,18 +197,30 @@ internal class BridgeApi(private val bridge: CblBridge) {
         }
         val rows = JSONArray()
         var total = 0
+        var bytes = 0L
+        var sizeCapped = false
         q.execute().use { rs ->
             for (r in rs) {
                 total++
-                if (rows.length() < limit) rows.put(JSONObject(r.toJSON()))
+                if (rows.length() < limit && !sizeCapped) {
+                    val json = r.toJSON()
+                    if (bytes + json.length > MAX_RESPONSE_CHARS && rows.length() > 0) {
+                        sizeCapped = true
+                    } else {
+                        bytes += json.length
+                        rows.put(JSONObject(json))
+                    }
+                }
             }
         }
-        return jsonOf(
+        val out = jsonOf(
             "rows" to rows,
             "rowCount" to total,
             "truncated" to (total > rows.length()),
             "elapsedMs" to (System.nanoTime() - started) / 1_000_000.0,
         )
+        if (sizeCapped) out.put("truncatedReason", "response size limit (${MAX_RESPONSE_CHARS / 1_000_000} MB); select fewer fields or add LIMIT/OFFSET")
+        return out
     }
 
     /** Samples documents and infers a field -> types summary so an agent can learn the schema cheaply. */
@@ -274,7 +298,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun getDoc(b: JSONObject): JSONObject {
         val db = db(b)
         val c = collection(db, b)
-        val id = b.getString("id")
+        val id = b.req("id")
         val doc = c.getDocument(id) ?: throw ApiException(404, "No document '$id' in ${c.fullName}")
         return docJson(doc, c)
     }
@@ -282,36 +306,45 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun putDoc(b: JSONObject): JSONObject {
         val db = db(b)
         val c = collection(db, b, create = b.optBoolean("createCollection", false))
-        return saveOne(db, c, b.optString("id").ifEmpty { null }, b.getJSONObject("body"), b.optString("mode", "replace"), b.optString("expectedRevision").ifEmpty { null })
+        return saveOne(db, c, b.optStr("id"), b.reqObj("body"), b.optStr("mode") ?: "replace", b.optStr("expectedRevision"))
     }
 
     private fun saveOne(db: Database, c: Collection, id: String?, body: JSONObject, mode: String, expectedRevision: String?): JSONObject {
-        val existing = id?.let { c.getDocument(it) }
-        if (expectedRevision != null && existing?.revisionID != expectedRevision) {
-            throw ApiException(409, "Revision mismatch for '$id': expected $expectedRevision, found ${existing?.revisionID}")
+        if (mode !in setOf("replace", "merge", "create")) throw ApiException(400, "mode must be replace, merge or create")
+        // merge/create/expectedRevision are read-check-write: save with FAIL_ON_CONFLICT so a concurrent writer
+        // (the app, or another request) is detected instead of silently overwritten. Merges simply retry.
+        for (attempt in 1..MAX_SAVE_ATTEMPTS) {
+            val existing = id?.let { c.getDocument(it) }
+            if (expectedRevision != null && existing?.revisionID != expectedRevision) {
+                throw ApiException(409, "Revision mismatch for '$id': expected $expectedRevision, found ${existing?.revisionID}")
+            }
+            val doc: MutableDocument = when (mode) {
+                "create" -> {
+                    if (existing != null) throw ApiException(409, "Document '$id' already exists in ${c.fullName}")
+                    if (id == null) MutableDocument(body.toNativeMap()) else MutableDocument(id, body.toNativeMap())
+                }
+                "merge" -> {
+                    if (existing == null) throw ApiException(404, "Cannot merge: no document '$id' in ${c.fullName}")
+                    @Suppress("UNCHECKED_CAST")
+                    val merged = mergePatch(existing.toMap(), body.toNativeMap()) as Map<String, Any?>
+                    existing.toMutable().setData(merged)
+                }
+                else -> when {
+                    existing != null -> existing.toMutable().setData(body.toNativeMap())
+                    id != null -> MutableDocument(id, body.toNativeMap())
+                    else -> MutableDocument(body.toNativeMap())
+                }
+            }
+            bridge.changes.markBridgeWrite(db.name, c, doc.id)
+            val strict = mode != "replace" || expectedRevision != null
+            val saved = if (strict) c.save(doc, ConcurrencyControl.FAIL_ON_CONFLICT) else { c.save(doc); true }
+            if (saved) {
+                val now = c.getDocument(doc.id)!!
+                return jsonOf("id" to now.id, "collection" to c.fullName, "revisionId" to now.revisionID, "created" to (existing == null))
+            }
+            if (mode != "merge") throw ApiException(409, "Document '${doc.id}' was changed concurrently; re-read and retry")
         }
-        val doc: MutableDocument = when (mode) {
-            "create" -> {
-                if (existing != null) throw ApiException(409, "Document '$id' already exists in ${c.fullName}")
-                if (id == null) MutableDocument(body.toNativeMap()) else MutableDocument(id, body.toNativeMap())
-            }
-            "merge" -> {
-                if (existing == null) throw ApiException(404, "Cannot merge: no document '$id' in ${c.fullName}")
-                @Suppress("UNCHECKED_CAST")
-                val merged = mergePatch(existing.toMap(), body.toNativeMap()) as Map<String, Any?>
-                existing.toMutable().setData(merged)
-            }
-            "replace" -> when {
-                existing != null -> existing.toMutable().setData(body.toNativeMap())
-                id != null -> MutableDocument(id, body.toNativeMap())
-                else -> MutableDocument(body.toNativeMap())
-            }
-            else -> throw ApiException(400, "mode must be replace, merge or create")
-        }
-        bridge.changes.markBridgeWrite(db.name, c, doc.id)
-        c.save(doc)
-        val saved = c.getDocument(doc.id)!!
-        return jsonOf("id" to saved.id, "collection" to c.fullName, "revisionId" to saved.revisionID, "created" to (existing == null))
+        throw ApiException(409, "Document '$id' kept changing concurrently; gave up after $MAX_SAVE_ATTEMPTS attempts")
     }
 
     /** RFC 7396 JSON Merge Patch: objects merge recursively, null removes a key, anything else replaces. */
@@ -329,7 +362,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun deleteDoc(b: JSONObject): JSONObject {
         val db = db(b)
         val c = collection(db, b)
-        val id = b.getString("id")
+        val id = b.req("id")
         val doc = c.getDocument(id) ?: throw ApiException(404, "No document '$id' in ${c.fullName}")
         bridge.changes.markBridgeWrite(db.name, c, id)
         if (b.optBoolean("purge", false)) c.purge(doc) else c.delete(doc)
@@ -346,13 +379,13 @@ internal class BridgeApi(private val bridge: CblBridge) {
             for (i in 0 until ops.length()) {
                 val op = ops.getJSONObject(i)
                 val opBody = JSONObject(op.toString()).put("database", db.name)
-                if (!op.has("collection") && b.has("collection")) opBody.put("collection", b.getString("collection"))
+                if (!op.has("collection") && b.has("collection")) opBody.put("collection", b.req("collection"))
                 val c = collection(db, opBody, create = b.optBoolean("createCollection", false))
-                val id = op.optString("id").ifEmpty { null }
-                when (val kind = op.optString("op", "put")) {
-                    "put", "replace" -> results.put(saveOne(db, c, id, op.getJSONObject("body"), "replace", null))
-                    "create" -> results.put(saveOne(db, c, id, op.getJSONObject("body"), "create", null))
-                    "merge" -> results.put(saveOne(db, c, id, op.getJSONObject("body"), "merge", null))
+                val id = op.optStr("id")
+                when (val kind = op.optStr("op") ?: "put") {
+                    "put", "replace" -> results.put(saveOne(db, c, id, op.reqObj("body"), "replace", null))
+                    "create" -> results.put(saveOne(db, c, id, op.reqObj("body"), "create", null))
+                    "merge" -> results.put(saveOne(db, c, id, op.reqObj("body"), "merge", null))
                     "delete", "purge" -> {
                         val doc = c.getDocument(id ?: throw ApiException(400, "operation $i: delete needs an id"))
                             ?: throw ApiException(404, "operation $i: no document '$id' in ${c.fullName}")
@@ -391,33 +424,33 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun createIndex(b: JSONObject): JSONObject {
         val c = collection(db(b), b)
         val exprs = b.getJSONArray("expressions").let { a -> (0 until a.length()).map { a.getString(it) } }
-        val where = b.optString("where").ifEmpty { null }
-        val config = when (b.optString("type", "value")) {
+        val where = b.optStr("where")
+        val config = when (b.optStr("type") ?: "value") {
             "value" -> ValueIndexConfiguration(exprs).apply { if (where != null) setWhere(where) }
             "fts", "full-text" -> FullTextIndexConfiguration(exprs).apply {
-                b.optString("language").ifEmpty { null }?.let { setLanguage(it) }
+                b.optStr("language")?.let { setLanguage(it) }
                 if (b.optBoolean("ignoreAccents", false)) ignoreAccents(true)
                 if (where != null) setWhere(where)
             }
             else -> throw ApiException(400, "type must be 'value' or 'fts'")
         }
-        c.createIndex(b.getString("name"), config)
-        return jsonOf("collection" to c.fullName, "created" to b.getString("name"), "indexes" to JSONArray(c.indexes.sorted()))
+        c.createIndex(b.req("name"), config)
+        return jsonOf("collection" to c.fullName, "created" to b.req("name"), "indexes" to JSONArray(c.indexes.sorted()))
     }
 
     private fun deleteIndex(b: JSONObject): JSONObject {
         val c = collection(db(b), b)
-        c.deleteIndex(b.getString("name"))
-        return jsonOf("collection" to c.fullName, "deleted" to b.getString("name"))
+        c.deleteIndex(b.req("name"))
+        return jsonOf("collection" to c.fullName, "deleted" to b.req("name"))
     }
 
     // ---------------------------------------------------------------- blobs
 
     private fun getBlob(b: JSONObject): JSONObject {
         val c = collection(db(b), b)
-        val id = b.getString("id")
+        val id = b.req("id")
         val doc = c.getDocument(id) ?: throw ApiException(404, "No document '$id'")
-        val blob = doc.getBlob(b.getString("property")) ?: throw ApiException(404, "No blob at '${b.getString("property")}' in '$id'")
+        val blob = doc.getBlob(b.req("property")) ?: throw ApiException(404, "No blob at '${b.req("property")}' in '$id'")
         val max = b.optInt("maxBytes", 1_000_000)
         val out = jsonOf("contentType" to blob.contentType, "length" to blob.length(), "digest" to blob.digest())
         if (blob.length() <= max) out.put("base64", Base64.encodeToString(blob.content, Base64.NO_WRAP))
@@ -428,13 +461,13 @@ internal class BridgeApi(private val bridge: CblBridge) {
     private fun putBlob(b: JSONObject): JSONObject {
         val db = db(b)
         val c = collection(db, b)
-        val id = b.getString("id")
+        val id = b.req("id")
         val doc = c.getDocument(id)?.toMutable() ?: throw ApiException(404, "No document '$id'")
-        val bytes = Base64.decode(b.getString("base64"), Base64.DEFAULT)
-        doc.setBlob(b.getString("property"), Blob(b.getString("contentType"), bytes))
+        val bytes = Base64.decode(b.req("base64"), Base64.DEFAULT)
+        doc.setBlob(b.req("property"), Blob(b.req("contentType"), bytes))
         bridge.changes.markBridgeWrite(db.name, c, id)
         c.save(doc)
-        return jsonOf("id" to id, "property" to b.getString("property"), "length" to bytes.size, "revisionId" to c.getDocument(id)!!.revisionID)
+        return jsonOf("id" to id, "property" to b.req("property"), "length" to bytes.size, "revisionId" to c.getDocument(id)!!.revisionID)
     }
 
     // ---------------------------------------------------------------- changes & replication
@@ -467,7 +500,7 @@ internal class BridgeApi(private val bridge: CblBridge) {
     }
 
     private fun replicatorControl(b: JSONObject, start: Boolean): JSONObject {
-        val name = b.getString("name")
+        val name = b.req("name")
         val r = bridge.replicators[name] ?: throw ApiException(404, "No replicator '$name'. Registered: ${bridge.replicators.keys}")
         if (start) r.start(b.optBoolean("resetCheckpoint", false)) else r.stop()
         return jsonOf("name" to name, "activity" to r.status.activityLevel.name)
@@ -475,5 +508,25 @@ internal class BridgeApi(private val bridge: CblBridge) {
 
     companion object {
         private const val TAG = "CblBridge"
+        private const val MAX_RESPONSE_CHARS = 16_000_000L
+        private const val MAX_SAVE_ATTEMPTS = 25
     }
+}
+
+/** Required non-empty string field; wrong types are a 400, not a silent coercion. */
+internal fun JSONObject.req(key: String): String =
+    optStr(key) ?: throw ApiException(400, "'$key' is required")
+
+/** Optional string field: absent/null -> null; present but not a non-empty string -> 400. */
+internal fun JSONObject.optStr(key: String): String? {
+    if (!has(key) || isNull(key)) return null
+    val v = get(key)
+    if (v !is String) throw ApiException(400, "'$key' must be a string")
+    if (v.isEmpty()) throw ApiException(400, "'$key' must not be empty")
+    return v
+}
+
+internal fun JSONObject.reqObj(key: String): JSONObject {
+    if (!has(key) || isNull(key)) throw ApiException(400, "'$key' is required")
+    return get(key) as? JSONObject ?: throw ApiException(400, "'$key' must be a JSON object")
 }

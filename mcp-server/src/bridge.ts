@@ -1,6 +1,12 @@
-import { forward, isInstalled, launchApp, listDevices, removeForward, runAsCat } from "./adb.js";
+import { dozeState, forward, isInstalled, launchApp, pidOf, listDevices, removeForward, runAsCat } from "./adb.js";
 
 export const DEFAULT_DEVICE_PORT = 47111;
+const DEBUG = /^(1|true|yes)$/i.test(process.env.CBL_MCP_DEBUG ?? "");
+const T0 = Date.now();
+/** CBL_MCP_DEBUG=1 logs every bridge round-trip and reconnect step to stderr (stdout is the MCP channel). */
+export function debug(msg: string) {
+  if (DEBUG) console.error(`[cbl-mcp +${Date.now() - T0}ms] ${msg}`);
+}
 const PORT_RANGE = 10;
 
 export interface BridgeHello {
@@ -32,6 +38,18 @@ export class BridgeError extends Error {
 }
 
 async function httpJson(port: number, path: string, opts: { token?: string; body?: unknown; timeoutMs?: number } = {}) {
+  const started = Date.now();
+  try {
+    return await httpJsonInner(port, path, opts);
+  } catch (e: any) {
+    if (path !== "/hello") debug(`${path} failed after ${Date.now() - started}ms: ${e.name} ${e.cause?.code ?? e.message}`);
+    throw e;
+  } finally {
+    if (path !== "/hello") debug(`${path} ${Date.now() - started}ms`);
+  }
+}
+
+async function httpJsonInner(port: number, path: string, opts: { token?: string; body?: unknown; timeoutMs?: number }) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: opts.body === undefined ? "GET" : "POST",
     headers: {
@@ -39,7 +57,7 @@ async function httpJson(port: number, path: string, opts: { token?: string; body
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
     },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
   });
   const text = await res.text();
   let data: any;
@@ -97,29 +115,47 @@ export class BridgeClient {
     const wantSerial = opts.device ?? this.preferredSerial;
     const wantPkg = opts.package ?? this.preferredPackage;
 
+    debug(`connect(${wantSerial ?? "any"}, ${wantPkg ?? "any"})`);
     let bridges = await this.discover(wantSerial);
+    debug(`discovered: ${bridges.map((b) => b.package + "@" + b.serial).join(", ") || "none"}`);
     let match = bridges.filter((b) => (!wantSerial || b.serial === wantSerial) && (!wantPkg || b.package === wantPkg));
 
     if (match.length === 0 && wantPkg && opts.launch !== false) {
       const devices = (await listDevices()).filter((d) => d.state === "device" && (!wantSerial || d.serial === wantSerial));
       if (devices.length === 1) {
-        if (!(await isInstalled(devices[0].serial, wantPkg))) {
+        if ((await isInstalled(devices[0].serial, wantPkg)) === false) {
           throw new BridgeError(`Package ${wantPkg} is not installed on ${devices[0].serial}. Install a debug build that includes cbl-bridge first.`);
         }
-        await launchApp(devices[0].serial, wantPkg);
-        for (let i = 0; i < 20 && match.length === 0; i++) {
-          await new Promise((r) => setTimeout(r, 500));
+        // Starts the app, or brings an already-running one to the foreground (no restart). Foregrounding matters:
+        // in Doze, Android blocks background apps' networking, localhost included.
+        debug(`launching/foregrounding ${wantPkg}`);
+        await launchApp(devices[0].serial, wantPkg).catch((e) => debug(`launch failed: ${e.message}`));
+        for (const until = Date.now() + 6_000; match.length === 0 && Date.now() < until; ) {
+          await new Promise((r) => setTimeout(r, 700));
           bridges = await this.discover(wantSerial);
           match = bridges.filter((b) => b.serial === devices[0].serial && b.package === wantPkg);
         }
       }
     }
 
+    if (match.length === 0 && wantPkg) {
+      const serial = wantSerial ?? (await listDevices()).find((d) => d.state === "device")?.serial;
+      const pid = serial ? await pidOf(serial, wantPkg) : undefined;
+      if (serial && pid) {
+        const doze = await dozeState(serial);
+        throw new BridgeError(
+          `${wantPkg} is running on ${serial} (pid ${pid}) but its bridge isn't answering` +
+            (doze && doze !== "ACTIVE" ? ` because the device is in Doze (deep idle: ${doze}), which blocks background apps' network, including localhost` : "") +
+            `. Bring the app to the foreground, or exempt it with: adb -s ${serial} shell dumpsys deviceidle whitelist +${wantPkg}`,
+        );
+      }
+    }
     if (match.length === 0) {
       const seen = bridges.map((b) => `${b.package} on ${b.serial}`).join(", ") || "none";
       throw new BridgeError(
         `No running app with the Couchbase Lite bridge found${wantPkg ? ` for package ${wantPkg}` : ""}${wantSerial ? ` on ${wantSerial}` : ""}. ` +
-          `Bridges seen: ${seen}. Make sure a debug build that includes cbl-bridge is installed and running.`,
+          `Bridges seen: ${seen}. Make sure a debug build that includes cbl-bridge is installed and running. ` +
+          `If the app is running in the background, Android may be blocking its network (Doze or background restrictions): bring it to the foreground.`,
       );
     }
     if (match.length > 1) {
@@ -157,9 +193,10 @@ export class BridgeClient {
         if (status !== 200) throw new BridgeError(data?.error ?? `HTTP ${status}`, status);
         return data;
       } catch (e) {
-        const retriable = e instanceof Reconnect || (e instanceof TypeError && attempt === 0); // fetch network errors are TypeErrors
+        const network = e instanceof TypeError || (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")); // fetch failures
+        const retriable = e instanceof Reconnect || (network && attempt === 0);
         if (!retriable || attempt > 0) {
-          if (e instanceof TypeError) {
+          if (network) {
             throw new BridgeError(`Lost connection to ${conn.pkg} on ${conn.serial}. Is the app still running? (${(e as any).cause?.code ?? e.message})`);
           }
           throw e;
@@ -177,7 +214,23 @@ export class BridgeClient {
       this.cursor = first.lastSeq;
     }
     const from = since ?? this.cursor!;
-    const data = await this.call(`/changes?since=${from}&timeoutMs=${timeoutMs}&limit=${limit}`, undefined, timeoutMs + 15_000);
+    const pidBefore = this.conn?.pid;
+    // Long-poll in short slices so a dead or unreachable app is noticed within seconds, not after the full wait.
+    const deadline = Date.now() + timeoutMs;
+    let data: any;
+    do {
+      const slice = Math.max(0, Math.min(5_000, deadline - Date.now()));
+      data = await this.call(`/changes?since=${from}&timeoutMs=${slice}&limit=${limit}`, undefined, slice + 10_000);
+      if (this.conn?.pid !== pidBefore) {
+        // The app restarted: its change feed started over, so the old cursor is meaningless.
+        const head = await this.call(`/changes?timeoutMs=0&limit=1`);
+        this.cursor = head.lastSeq;
+        return {
+          since: from, lastSeq: head.lastSeq, events: [], truncated: false, gap: true, appRestarted: true,
+          note: "The app process restarted (new pid), so changes made before the restart are not available. The cursor was reset to now.",
+        };
+      }
+    } while (data.events.length === 0 && !data.gap && Date.now() < deadline);
     this.cursor = data.lastSeq;
     return { since: from, ...data };
   }
