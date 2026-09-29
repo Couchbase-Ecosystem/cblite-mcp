@@ -103,11 +103,14 @@ are added, both labelled on screen. The whole six-step session cost $0.52. Detai
 ## Tests
 
 ```bash
-scripts/bridge_smoke_test.py            # 17 checks against the bridge's HTTP API (needs the demo app running)
-cd mcp-server && npm test               # 16 end-to-end MCP tests: all 20 tools, UI assertions, read-only mode, auth, restart
+export ANDROID_SERIAL=<device>          # the demo app must be installed and running
+scripts/bridge_smoke_test.py            # 17 checks of the bridge's HTTP API
+scripts/adversarial_test.py             # 32 attacks: malformed HTTP, slow clients, hostile JSON, races, overload
+cd mcp-server && npm test               # 23 end-to-end MCP tests: all 20 tools, on-screen assertions, lifecycle chaos
 ```
 
-Both pass against Brew Board on an API 34 emulator with Couchbase Lite CE 4.1.2.
+All pass, with zero app crashes, on a **Pixel 8a (Android 17)** and an **API 34 emulator**, using Couchbase Lite CE
+4.1.2 (the latest release as of 2026-09-29).
 
 ## Status & limitations
 

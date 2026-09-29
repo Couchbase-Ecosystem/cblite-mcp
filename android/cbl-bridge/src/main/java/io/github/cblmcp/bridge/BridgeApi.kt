@@ -343,6 +343,8 @@ internal class BridgeApi(private val bridge: CblBridge) {
                 return jsonOf("id" to now.id, "collection" to c.fullName, "revisionId" to now.revisionID, "created" to (existing == null))
             }
             if (mode != "merge") throw ApiException(409, "Document '${doc.id}' was changed concurrently; re-read and retry")
+            // Randomised backoff so many concurrent merges on one document spread out instead of colliding again.
+            Thread.sleep((1L..(5L * attempt)).random())
         }
         throw ApiException(409, "Document '$id' kept changing concurrently; gave up after $MAX_SAVE_ATTEMPTS attempts")
     }

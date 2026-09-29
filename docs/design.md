@@ -71,5 +71,15 @@ down is an alternative, but it's slower and can't reach local-only data.
   registered". The integration test kills that process before it taps.
 - **Leaked port forwards.** If the MCP server is killed hard (e.g. its client exits), the `adb forward` it created
   stays behind until adb restarts or you run `adb forward --remove-all`. Harmless, but it accumulates.
+- **NUL characters are refused.** Couchbase Lite for Android (4.1.2) silently truncates strings and property names
+  at U+0000 when saving (`"ab\u0000cd"` is stored as `"ab"`, confirmed with SQL++ `LENGTH()`). The bridge returns
+  400 instead of storing corrupted data. Worth reporting upstream. Empty property names (`""`) are also rejected, by
+  Couchbase Lite itself.
+- **Doze + background.** When the device is in Doze and the app is in the background, Android can block the app's
+  network, localhost included, and the device's own shell commands stall. The MCP server tries to recover by
+  bringing the app to the foreground and otherwise fails within about 40 s with a hint. A phone connected over USB is
+  charging, so it doesn't enter Doze in normal use; this mostly matters for wireless adb.
+- **adb forwarding has limits.** Thousands of back-to-back connections through one `adb forward` can knock the
+  forward over, on the emulator in particular. Normal agent traffic is nowhere near that.
 - **No iOS.** A Swift bridge using the same HTTP contract would let the same MCP server work over
   `iproxy`/`devicectl`. Not built.

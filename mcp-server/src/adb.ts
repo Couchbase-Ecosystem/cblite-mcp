@@ -71,8 +71,9 @@ export async function runAsCat(serial: string, pkg: string, path: string): Promi
 /** true / false, or undefined when adb itself failed (e.g. a slow device) and we genuinely don't know. */
 export async function isInstalled(serial: string, pkg: string): Promise<boolean | undefined> {
   try {
-    const out = await adb(["shell", "pm", "path", pkg], serial, 4_000);
-    return out.includes("package:");
+    // `pm list packages` exits 0 either way (unlike `pm path`), so an adb failure stays distinguishable.
+    const out = await adb(["shell", "pm", "list", "packages", pkg], serial, 4_000);
+    return out.split("\n").some((l) => l.trim() === `package:${pkg}`);
   } catch {
     return undefined;
   }
