@@ -1,24 +1,49 @@
 {
-  "name": "cbl-mcp",
+  "name": "@couchbase-ecosystem/cblite-mcp",
   "version": "0.1.0",
-  "description": "MCP server that lets AI agents query and edit the live Couchbase Lite database inside a running Android app (via the cbl-bridge debug library and adb).",
+  "description": "MCP server that lets AI agents query and edit the live Couchbase Lite database inside a running Android app (debug builds, via adb and the cbl-bridge library).",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "couchbase",
+    "couchbase-lite",
+    "android",
+    "adb",
+    "ai",
+    "agents",
+    "claude"
+  ],
+  "homepage": "https://github.com/Couchbase-Ecosystem/cblite-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Couchbase-Ecosystem/cblite-mcp.git",
+    "directory": "mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/Couchbase-Ecosystem/cblite-mcp/issues"
+  },
+  "license": "MIT",
   "type": "module",
   "bin": {
-    "cbl-mcp": "dist/index.js"
+    "cblite-mcp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p .",
     "start": "node dist/index.js",
-    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^4.0.0"

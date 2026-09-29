@@ -68,7 +68,7 @@ live queries re-run, the UI updates, replication picks up the change, and nothin
 │          │ MCP (stdio)                        │   adb    │   │ cbl-bridge  │────►│ Couchbase Lite │──►│  App UI  │ │
 │          ▼                                    │ forward  │   │ 127.0.0.1   │     │ (the app's own │   │ (live    │ │
 │  ┌──────────────────┐   JSON over HTTP  ──────┼──────────┼──►│ + token     │     │  Database)     │   │ queries) │ │
-│  │ cbl-mcp (Node)   │                         │          │   └─────────────┘     └────────────────┘   └──────────┘ │
+│  │ cblite-mcp (Node)│                         │          │   └─────────────┘     └────────────────┘   └──────────┘ │
 │  │ 20 tools         │                         │          │                                                         │
 │  └──────────────────┘                         │          │                                                         │
 └───────────────────────────────────────────────┘          └─────────────────────────────────────────────────────────┘
@@ -77,7 +77,7 @@ live queries re-run, the UI updates, replication picks up the change, and nothin
 1. **`cbl-bridge`** is an Android library you add with `debugImplementation`. It has no dependencies and starts
    itself when the app process starts. It serves a small JSON API on `127.0.0.1` inside the app, protected by a
    random per-process token.
-2. **`cbl-mcp`** is a Node MCP server on your machine. It finds bridged apps over adb, reads the token through
+2. **`cblite-mcp`** is a Node MCP server on your machine, published on npm as `@couchbase-ecosystem/cblite-mcp`. It finds bridged apps over adb, reads the token through
    `adb run-as` (which only works on debuggable builds), forwards a port, and exposes 20 tools.
 3. **Your app** makes one call, `CblBridge.register(database)`, from debug-only code, so the bridge uses the exact
    `Database` instance your UI is observing.
@@ -102,28 +102,31 @@ release APK: 0 bridge classes.
 | | |
 |---|---|
 | **Your app** | Android, Couchbase Lite for Android **4.x**, CE or EE, including encrypted databases (tested with 4.1.2), a **debuggable** (debug) build, minSdk 24+ |
-| **Your machine** | Node.js **20+**, Android platform-tools (`adb`) on `PATH` or `ANDROID_HOME` set, JDK 17 to build the Android parts |
+| **Your machine** | Node.js **20+** and Android platform-tools (`adb`) on `PATH` or `ANDROID_HOME` set. JDK 17 only if you build from source |
 | **Device** | Emulator or physical device with USB debugging on |
 | **MCP client** | Claude Code (tested), or any client that supports stdio MCP servers |
 
+**Where to get it:**
+
+| Piece | Get it from |
+|---|---|
+| MCP server | npm: [`@couchbase-ecosystem/cblite-mcp`](https://www.npmjs.com/package/@couchbase-ecosystem/cblite-mcp) |
+| Android library `cbl-bridge-<version>.aar` (+ sources jar) | [GitHub releases](https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest) |
+| Demo app `brewboard-demo-<version>-debug.apk` | [GitHub releases](https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest) |
+
 ## Quick start: try the demo app (5 minutes)
 
-The repo includes **Brew Board**, a small Jetpack Compose coffee-shop order board built on Couchbase Lite 4.1.2
-with live queries. It's the fastest way to see everything working.
+The release includes **Brew Board**, a small Jetpack Compose coffee-shop order board built on Couchbase Lite 4.1.2
+with live queries. It's the fastest way to see everything working, and there's nothing to build.
 
 ```bash
-git clone https://github.com/Couchbase-Ecosystem/cblite-mcp.git
-cd cblite-mcp
-
-# 1. Build the MCP server
-cd mcp-server && npm ci && npm run build && cd ..
-
-# 2. Build and install the demo app on a running emulator or connected device
-cd android && ./gradlew :demo-app:installDebug && cd ..
+# 1. Install and open the demo app on a running emulator or connected device
+curl -LO https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest/download/brewboard-demo-0.1.0-debug.apk
+adb install brewboard-demo-0.1.0-debug.apk
 adb shell am start -n io.github.cblmcp.brewboard/.MainActivity
 
-# 3. Register the MCP server with Claude Code
-claude mcp add cbl -- node "$PWD/mcp-server/dist/index.js"
+# 2. Add the MCP server to Claude Code (npx fetches it from npm)
+claude mcp add cbl -e CBL_PACKAGE=io.github.cblmcp.brewboard -- npx -y @couchbase-ecosystem/cblite-mcp
 ```
 
 Now start `claude` and try:
@@ -136,42 +139,55 @@ Now start `claude` and try:
 
 Watch the orders appear and change on the device as the agent works.
 
-> **More than one device attached?** Pin one: `claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -- node "$PWD/mcp-server/dist/index.js"`
+> **More than one device attached?** Pin one with `-e ANDROID_SERIAL=emulator-5554` in the `claude mcp add` command.
+
+<details>
+<summary>Build everything from source instead</summary>
+
+```bash
+git clone https://github.com/Couchbase-Ecosystem/cblite-mcp.git
+cd cblite-mcp
+cd mcp-server && npm ci && npm run build && cd ..
+cd android && ./gradlew :demo-app:installDebug && cd ..
+adb shell am start -n io.github.cblmcp.brewboard/.MainActivity
+claude mcp add cbl -- node "$PWD/mcp-server/dist/index.js"
+```
+</details>
 
 ## Add it to your own app
 
 ### 1. Add the library to debug builds
 
-The library isn't on Maven Central yet. Publish it to your local Maven repository from a checkout of this repo:
+Download `cbl-bridge-0.1.0.aar` from the [latest release](https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest)
+into your app module's `libs/` folder:
 
 ```bash
-cd cblite-mcp/android
-./gradlew :cbl-bridge:publishToMavenLocal     # -> io.github.cblmcp:cbl-bridge:0.1.0 in ~/.m2
-```
-
-Then in your app:
-
-```kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        mavenLocal()          // for cbl-bridge
-    }
-}
+curl -L --create-dirs -o app/libs/cbl-bridge-0.1.0.aar https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest/download/cbl-bridge-0.1.0.aar
 ```
 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
     implementation("com.couchbase.lite:couchbase-lite-android-ktx:4.1.2")   // your existing Couchbase Lite (CE or EE)
-    debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")               // debug builds only
+    debugImplementation(files("libs/cbl-bridge-0.1.0.aar"))                // debug builds only
 }
 ```
 
+The library has no dependencies of its own. It compiles against Couchbase Lite with `compileOnly`, so it uses
+whichever Couchbase Lite version and edition your app ships.
+
 <details>
-<summary>Alternative: include the module from source</summary>
+<summary>Alternatives: Maven Local, or include the module from source</summary>
+
+**Maven Local.** From a checkout of this repo, publish once:
+
+```bash
+cd cblite-mcp/android && ./gradlew :cbl-bridge:publishToMavenLocal   # -> io.github.cblmcp:cbl-bridge:0.1.0
+```
+
+Then add `mavenLocal()` to your repositories and use `debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")`.
+
+**Source module.**
 
 ```kotlin
 // settings.gradle.kts
@@ -181,9 +197,6 @@ project(":cbl-bridge").projectDir = file("../cblite-mcp/android/cbl-bridge")
 // app/build.gradle.kts
 dependencies { debugImplementation(project(":cbl-bridge")) }
 ```
-
-The module compiles against Couchbase Lite with `compileOnly`, so your app's own Couchbase Lite version is the one
-used at runtime.
 </details>
 
 `debugImplementation` is a standard Gradle configuration: the dependency exists only in debug builds and never
@@ -249,15 +262,15 @@ Then [connect your MCP client](#connect-your-mcp-client) and ask: *"What's in th
 
 ## Connect your MCP client
 
-Build the server once (`cd mcp-server && npm ci && npm run build`), then point your client at
-`mcp-server/dist/index.js` using its **absolute path**.
+The server is published on npm as [`@couchbase-ecosystem/cblite-mcp`](https://www.npmjs.com/package/@couchbase-ecosystem/cblite-mcp), so `npx` runs it with no
+separate install step.
 
 **Claude Code**
 
 ```bash
-claude mcp add cbl -- node /absolute/path/to/cblite-mcp/mcp-server/dist/index.js
+claude mcp add cbl -- npx -y @couchbase-ecosystem/cblite-mcp
 # pin a device and/or app:
-claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.app -- node /absolute/path/to/cblite-mcp/mcp-server/dist/index.js
+claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.app -- npx -y @couchbase-ecosystem/cblite-mcp
 ```
 
 **Claude Desktop**: `claude_desktop_config.json`
@@ -266,8 +279,8 @@ claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.ap
 {
   "mcpServers": {
     "cbl": {
-      "command": "node",
-      "args": ["/absolute/path/to/cblite-mcp/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@couchbase-ecosystem/cblite-mcp"],
       "env": { "CBL_PACKAGE": "com.example.app" }
     }
   }
@@ -279,10 +292,13 @@ claude mcp add cbl -e ANDROID_SERIAL=emulator-5554 -e CBL_PACKAGE=com.example.ap
 ```json
 {
   "servers": {
-    "cbl": { "type": "stdio", "command": "node", "args": ["/absolute/path/to/cblite-mcp/mcp-server/dist/index.js"] }
+    "cbl": { "type": "stdio", "command": "npx", "args": ["-y", "@couchbase-ecosystem/cblite-mcp"] }
   }
 }
 ```
+
+**Prefer a global install?** `npm install -g @couchbase-ecosystem/cblite-mcp`, then use `cblite-mcp` as the command.
+**From source:** `node /absolute/path/to/cblite-mcp/mcp-server/dist/index.js`.
 
 Claude Code is the client this was tested with; the others use the standard stdio setup.
 
@@ -436,7 +452,7 @@ Details and the reasoning behind each: [docs/design.md](docs/design.md#limitatio
 android/
   cbl-bridge/      Android library (debugImplementation): HTTP server, API, change feed
   demo-app/        Brew Board: Compose sample app on Couchbase Lite 4.1.2
-mcp-server/        Node/TypeScript MCP server (cbl-mcp) + end-to-end tests
+mcp-server/        Node/TypeScript MCP server (npm: @couchbase-ecosystem/cblite-mcp) + end-to-end tests
 scripts/           Bridge smoke test and adversarial test suite
 demo/              Demo recording pipeline, Remotion video project, final video
 docs/              Design notes, tool reference, bridge API, how the demo was made

@@ -1,4 +1,10 @@
-# cbl-mcp tool reference
+# cblite-mcp tool reference
+
+Published on npm as [`@couchbase-ecosystem/cblite-mcp`](https://www.npmjs.com/package/@couchbase-ecosystem/cblite-mcp):
+
+```bash
+claude mcp add cbl -- npx -y @couchbase-ecosystem/cblite-mcp
+```
 
 Environment variables:
 

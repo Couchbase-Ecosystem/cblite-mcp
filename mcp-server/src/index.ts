@@ -8,7 +8,7 @@ const READ_ONLY = /^(1|true|yes)$/i.test(process.env.CBL_MCP_READ_ONLY ?? "");
 const client = new BridgeClient();
 
 const server = new McpServer(
-  { name: "cbl-mcp", version: "0.1.0" },
+  { name: "cblite-mcp", version: "0.1.0" },
   {
     instructions:
       "Tools for the live Couchbase Lite database inside a running Android app (debug build with the cbl-bridge library). " +

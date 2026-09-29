@@ -5,16 +5,18 @@ Package `io.github.cblmcp.bridge`, min SDK 24, no runtime dependencies. It compi
 
 ## Integration
 
-```bash
-./gradlew :cbl-bridge:publishToMavenLocal   # from android/ in this repo -> io.github.cblmcp:cbl-bridge:0.1.0
-```
+Download `cbl-bridge-<version>.aar` from the [GitHub releases](https://github.com/Couchbase-Ecosystem/cblite-mcp/releases/latest)
+into `app/libs/`, then:
 
 ```kotlin
-// app/build.gradle.kts (add mavenLocal() to your repositories)
+// app/build.gradle.kts
 dependencies {
-    debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")
+    debugImplementation(files("libs/cbl-bridge-0.1.0.aar"))
 }
 ```
+
+To build from source instead, run `./gradlew :cbl-bridge:publishToMavenLocal` in `android/` and use
+`debugImplementation("io.github.cblmcp:cbl-bridge:0.1.0")` with `mavenLocal()`.
 
 ```kotlin
 // src/debug/java/<your package>/DebugHooks.kt
