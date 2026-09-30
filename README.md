@@ -490,3 +490,7 @@ while discovery, auth and recovery logic live on your machine, where they're eas
 - [docs/mcp-tools.md](docs/mcp-tools.md): tool reference and environment variables
 - [docs/bridge-library.md](docs/bridge-library.md): library integration and the on-device HTTP API
 - [docs/demo.md](docs/demo.md): how the demo video was recorded and edited, and how to reproduce it
+
+## Support
+
+This project is community-supported. All related issues should be reported in this github repo. 
